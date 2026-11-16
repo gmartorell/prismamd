@@ -8,6 +8,8 @@ El formato está basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1
 
 ## [Unreleased]
 
+## [2026.11.16.1] - 2026-11-16
+
 ### Añadido
 - Licencia open source **MIT** en [LICENSE](LICENSE) (`Copyright (c) 2026 Guillem Martorell Nicolau`) junto con metadatos de autoría y repositorio en [package.json](package.json) y [README.md](README.md).
 - Workflow de GitHub Actions ([deploy-pwa.yml](.github/workflows/deploy-pwa.yml)) para validar tipos, ejecutar tests y desplegar automáticamente `dist-pwa/` en GitHub Pages al hacer push a `main`.

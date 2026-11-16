@@ -1,4 +1,4 @@
-const CACHE_NAME = 'prismamd-2026.11.15.6';
+const CACHE_NAME = 'prismamd-2026.11.16.1';
 const PRECACHE_ASSETS = /*__PRECACHE_ASSETS__*/ [];
 
 self.addEventListener('install', (event) => {
