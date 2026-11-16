@@ -7,9 +7,10 @@ import { useNodeUiContext } from '../nodeUiContext';
 interface FrontmatterCardProps {
   value: string;
   onChange: (next: string) => void;
+  onEscape?: () => void;
 }
 
-function FrontmatterCard({ value, onChange }: FrontmatterCardProps) {
+function FrontmatterCard({ value, onChange, onEscape }: FrontmatterCardProps) {
   const { t } = useNodeUiContext();
   const [collapsed, setCollapsed] = useState(false);
 
@@ -33,6 +34,13 @@ function FrontmatterCard({ value, onChange }: FrontmatterCardProps) {
           rows={Math.max(2, Math.min(10, value.split('\n').length))}
           placeholder={t.blocks.frontmatterPlaceholder}
           onInput={(e) => onChange((e.currentTarget as HTMLTextAreaElement).value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Escape') {
+              e.preventDefault();
+              e.stopPropagation();
+              onEscape?.();
+            }
+          }}
         />
       )}
     </div>
@@ -41,7 +49,6 @@ function FrontmatterCard({ value, onChange }: FrontmatterCardProps) {
 
 export const FrontmatterExtension = Node.create({
   name: 'frontmatter',
-  group: 'block',
   atom: true,
   defining: true,
 
@@ -57,8 +64,13 @@ export const FrontmatterExtension = Node.create({
     return [{ tag: 'div[data-type="frontmatter"]' }];
   },
 
-  renderHTML({ HTMLAttributes }) {
-    return ['div', mergeAttributes(HTMLAttributes, { 'data-type': 'frontmatter' })];
+  renderHTML({ node, HTMLAttributes }) {
+    const val = String(node.attrs.value ?? '');
+    return ['div', mergeAttributes(HTMLAttributes, { 'data-type': 'frontmatter' }), `---\n${val}\n---`];
+  },
+
+  renderText({ node }) {
+    return `---\n${String(node.attrs.value ?? '')}\n---`;
   },
 
   addNodeView() {
@@ -78,10 +90,20 @@ export const FrontmatterExtension = Node.create({
         );
       };
 
+      const refocusEditor = () => {
+        if (!editor.isDestroyed) {
+          editor.commands.focus();
+        }
+      };
+
       const mount = (pmNode: PMNode) => {
         currentNode = pmNode;
         render(
-          <FrontmatterCard value={String(pmNode.attrs.value ?? '')} onChange={updateValue} />,
+          <FrontmatterCard
+            value={String(pmNode.attrs.value ?? '')}
+            onChange={updateValue}
+            onEscape={refocusEditor}
+          />,
           dom,
         );
       };

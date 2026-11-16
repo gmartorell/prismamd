@@ -2,7 +2,6 @@ import {
   AlertTriangle,
   Bold,
   BookOpen,
-  Check,
   Code,
   Columns2,
   Command,
@@ -104,6 +103,7 @@ export function TopToolbar({
   const { locale, t, availableLocales, setLocale } = useI18n();
   const [exportOpen, setExportOpen] = useState(false);
   const exportRef = useRef<HTMLDivElement | null>(null);
+  const exportBtnRef = useRef<HTMLButtonElement | null>(null);
 
   useEffect(() => {
     if (!exportOpen) return;
@@ -112,8 +112,20 @@ export function TopToolbar({
         setExportOpen(false);
       }
     };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        e.stopPropagation();
+        setExportOpen(false);
+        exportBtnRef.current?.focus();
+      }
+    };
     document.addEventListener('mousedown', onDocClick);
-    return () => document.removeEventListener('mousedown', onDocClick);
+    window.addEventListener('keydown', onKeyDown, true);
+    return () => {
+      document.removeEventListener('mousedown', onDocClick);
+      window.removeEventListener('keydown', onKeyDown, true);
+    };
   }, [exportOpen]);
 
   if (zenMode) {
@@ -179,7 +191,7 @@ export function TopToolbar({
       </div>
 
       <div className="toolbar-group toolbar-center">
-        <div className="view-switcher" role="tablist" aria-label="View mode">
+        <div className="view-switcher" role="tablist" aria-label={t.views.viewModeAria}>
           <button
             type="button"
             role="tab"
@@ -274,8 +286,12 @@ export function TopToolbar({
 
         <div className="dropdown-wrap" ref={exportRef}>
           <button
+            ref={exportBtnRef}
             type="button"
             className="tool-btn"
+            aria-label={t.exportMenu.label}
+            aria-haspopup="menu"
+            aria-expanded={exportOpen}
             onClick={() => setExportOpen((v) => !v)}
             title={t.exportMenu.label}
             data-testid="export-menu-btn"
@@ -283,9 +299,10 @@ export function TopToolbar({
             <Download size={15} />
           </button>
           {exportOpen && (
-            <div className="dropdown-menu">
+            <div className="dropdown-menu" role="menu">
               <button
                 type="button"
+                role="menuitem"
                 className="dropdown-item"
                 onClick={() => {
                   setExportOpen(false);
@@ -297,6 +314,7 @@ export function TopToolbar({
               </button>
               <button
                 type="button"
+                role="menuitem"
                 className="dropdown-item"
                 onClick={() => {
                   setExportOpen(false);
@@ -308,6 +326,7 @@ export function TopToolbar({
               </button>
               <button
                 type="button"
+                role="menuitem"
                 className="dropdown-item"
                 onClick={() => {
                   setExportOpen(false);
@@ -365,6 +384,7 @@ export function TopToolbar({
             className="tool-btn"
             onClick={onExpandSidePanel}
             title={t.sidebars.expandToTab}
+            aria-label={t.sidebars.expandToTab}
           >
             <Maximize2 size={15} />
           </button>
@@ -374,14 +394,11 @@ export function TopToolbar({
             className="tool-btn hide-mobile-xs"
             onClick={onToggleZen}
             title={t.toolbar.zenMode}
+            aria-label={t.toolbar.zenMode}
           >
             <Maximize2 size={15} />
           </button>
         )}
-
-        <span className="sr-only">
-          <Check size={1} />
-        </span>
       </div>
     </header>
   );

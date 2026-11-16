@@ -1,9 +1,11 @@
-import { Editor } from '@tiptap/core';
+import { Editor, type JSONContent } from '@tiptap/core';
 import CodeBlockLowlight from '@tiptap/extension-code-block-lowlight';
+import Document from '@tiptap/extension-document';
 import Image from '@tiptap/extension-image';
-import { TaskItem, TaskList } from '@tiptap/extension-list';
+import { OrderedList, TaskItem, TaskList } from '@tiptap/extension-list';
 import Placeholder from '@tiptap/extension-placeholder';
 import { Table, TableCell, TableHeader, TableRow } from '@tiptap/extension-table';
+import type { Node as PMNode } from '@tiptap/pm/model';
 import StarterKit from '@tiptap/starter-kit';
 import { common, createLowlight } from 'lowlight';
 import { forwardRef } from 'preact/compat';
@@ -12,8 +14,8 @@ import { useI18n } from '../../i18n';
 import { markdownToProseMirrorDoc, proseMirrorDocToMarkdown } from '../../markdown/bridge';
 import { fileToDataUri, sanitizeImageAlt } from '../../markdown/imageDataUri';
 import type { ThemeMode } from '../../renderers/mermaidRenderer';
-import { BubbleFormatMenu } from './BubbleFormatMenu';
-import { updateNodeUiContext } from './nodeUiContext';
+import { BubbleFormatMenu, extractSelectionLatex } from './BubbleFormatMenu';
+import { getNodeUiContext, subscribeNodeUiContext, updateNodeUiContext } from './nodeUiContext';
 import { FrontmatterExtension } from './nodes/FrontmatterExtension';
 import { GithubAlertExtension } from './nodes/GithubAlertExtension';
 import { MathBlockExtension, MathInlineExtension } from './nodes/MathExtensions';
@@ -62,6 +64,196 @@ interface PreviewEditorProps {
 
 const lowlight = createLowlight(common);
 
+const CODE_BLOCK_LANGUAGES = [
+  'typescript',
+  'javascript',
+  'python',
+  'bash',
+  'json',
+  'html',
+  'css',
+  'sql',
+  'markdown',
+  'yaml',
+  'rust',
+  'go',
+  'java',
+  'c',
+  'cpp',
+] as const;
+
+export const PrismaDocument = Document.extend({
+  content: 'frontmatter? block+',
+});
+
+function normalizeDocJsonForSchema(docJson: JSONContent): JSONContent {
+  const rawContent = Array.isArray(docJson.content) ? docJson.content : [];
+  const frontmatterNodes = rawContent.filter((n) => n.type === 'frontmatter');
+  const blockNodes = rawContent.filter((n) => n.type !== 'frontmatter');
+  const nextContent: JSONContent[] = [];
+
+  if (frontmatterNodes.length > 0) {
+    nextContent.push(frontmatterNodes[0]);
+  }
+  if (blockNodes.length > 0) {
+    nextContent.push(...blockNodes);
+  } else {
+    nextContent.push({ type: 'paragraph' });
+  }
+
+  return {
+    ...docJson,
+    type: 'doc',
+    content: nextContent,
+  };
+}
+
+const InteractiveCodeBlock = CodeBlockLowlight.extend({
+  addAttributes() {
+    return {
+      ...this.parent?.(),
+      meta: {
+        default: null,
+        rendered: false,
+      },
+    };
+  },
+
+  addNodeView() {
+    return ({ node, editor, getPos }) => {
+      let currentNode: PMNode = node;
+      let copied = false;
+      let copyTimer: number | null = null;
+
+      const dom = document.createElement('div');
+      dom.className = 'pm-code-block';
+
+      const header = document.createElement('div');
+      header.className = 'pm-code-block-header';
+      header.contentEditable = 'false';
+
+      const select = document.createElement('select');
+      select.className = 'pm-code-lang-select';
+
+      const autoOption = document.createElement('option');
+      autoOption.value = '';
+      select.appendChild(autoOption);
+
+      for (const lang of CODE_BLOCK_LANGUAGES) {
+        const opt = document.createElement('option');
+        opt.value = lang;
+        opt.textContent = lang;
+        select.appendChild(opt);
+      }
+
+      let customOption: HTMLOptionElement | null = null;
+
+      const copyBtn = document.createElement('button');
+      copyBtn.type = 'button';
+      copyBtn.className = 'pm-code-copy-btn';
+
+      const pre = document.createElement('pre');
+      const contentDOM = document.createElement('code');
+      pre.appendChild(contentDOM);
+
+      header.append(select, copyBtn);
+      dom.append(header, pre);
+
+      const syncUi = (pmNode: PMNode) => {
+        const { t } = getNodeUiContext();
+        const rawLang = typeof pmNode.attrs.language === 'string' ? pmNode.attrs.language.trim() : '';
+
+        autoOption.textContent = t.blocks.codeLanguageAuto;
+        select.setAttribute('aria-label', t.blocks.codeLanguageAria);
+
+        if (rawLang && !(CODE_BLOCK_LANGUAGES as readonly string[]).includes(rawLang)) {
+          if (!customOption) {
+            customOption = document.createElement('option');
+            customOption.dataset.customLang = 'true';
+            select.appendChild(customOption);
+          }
+          customOption.value = rawLang;
+          customOption.textContent = rawLang;
+        } else if (customOption) {
+          customOption.remove();
+          customOption = null;
+        }
+
+        select.value = rawLang;
+        const nextCodeClass = rawLang ? `language-${rawLang}` : '';
+        if (contentDOM.className !== nextCodeClass) {
+          contentDOM.className = nextCodeClass;
+        }
+
+        copyBtn.textContent = copied ? t.blocks.codeCopied : t.blocks.copyCode;
+        if (copied) {
+          copyBtn.dataset.copied = 'true';
+        } else {
+          delete copyBtn.dataset.copied;
+        }
+      };
+
+      select.addEventListener('change', () => {
+        const pos = typeof getPos === 'function' ? getPos() : undefined;
+        if (typeof pos !== 'number' || editor.isDestroyed) return;
+        const nextLang = select.value || '';
+        editor.view.dispatch(
+          editor.state.tr.setNodeMarkup(pos, undefined, {
+            ...currentNode.attrs,
+            language: nextLang,
+          }),
+        );
+      });
+
+      copyBtn.addEventListener('click', () => {
+        const text = currentNode.textContent;
+        void navigator.clipboard?.writeText(text).catch(() => undefined);
+        copied = true;
+        syncUi(currentNode);
+        if (copyTimer !== null) {
+          window.clearTimeout(copyTimer);
+        }
+        copyTimer = window.setTimeout(() => {
+          copyTimer = null;
+          copied = false;
+          syncUi(currentNode);
+        }, 1500);
+      });
+
+      const unsubscribe = subscribeNodeUiContext(() => syncUi(currentNode));
+      syncUi(node);
+
+      return {
+        dom,
+        contentDOM,
+        update(updatedNode) {
+          if (updatedNode.type.name !== 'codeBlock') return false;
+          currentNode = updatedNode;
+          syncUi(updatedNode);
+          return true;
+        },
+        stopEvent(event) {
+          const target = event.target as HTMLElement | null;
+          return Boolean(target?.closest('.pm-code-block-header'));
+        },
+        ignoreMutation(mutation) {
+          if (mutation.type === 'attributes' && mutation.target === contentDOM) {
+            return true;
+          }
+          return !contentDOM.contains(mutation.target as globalThis.Node);
+        },
+        destroy() {
+          if (copyTimer !== null) {
+            window.clearTimeout(copyTimer);
+            copyTimer = null;
+          }
+          unsubscribe();
+        },
+      };
+    };
+  },
+});
+
 const AlignedTableCell = TableCell.extend({
   addAttributes() {
     return {
@@ -90,6 +282,55 @@ const AlignedTableHeader = TableHeader.extend({
   },
 });
 
+const MixedOrderedList = OrderedList.extend({
+  content: '(listItem | taskItem)+',
+});
+
+export function createPreviewExtensions() {
+  return [
+    PrismaDocument,
+    StarterKit.configure({
+      document: false,
+      codeBlock: false,
+      orderedList: false,
+      underline: false,
+      link: {
+        openOnClick: false,
+        autolink: true,
+      },
+    }),
+    MixedOrderedList,
+    InteractiveCodeBlock.configure({
+      lowlight,
+      defaultLanguage: null,
+    }),
+    Table.configure({
+      resizable: false,
+    }),
+    TableRow,
+    AlignedTableHeader,
+    AlignedTableCell,
+    TaskList,
+    TaskItem.configure({
+      nested: true,
+    }),
+    Image.configure({
+      allowBase64: true,
+      inline: true,
+    }),
+    Placeholder.configure({
+      placeholder: () => getNodeUiContext().t.blocks.placeholderEditor,
+    }),
+    FrontmatterExtension,
+    GithubAlertExtension,
+    MermaidExtension,
+    MathInlineExtension,
+    MathBlockExtension,
+    RawHtmlBlockExtension,
+    RawHtmlInlineExtension,
+  ];
+}
+
 export const PreviewEditor = forwardRef<PreviewEditorHandle, PreviewEditorProps>(function PreviewEditor(
   {
     docKey,
@@ -111,6 +352,7 @@ export const PreviewEditor = forwardRef<PreviewEditorHandle, PreviewEditorProps>
 
   const lastSyncedMdRef = useRef(markdownText);
   const suppressScrollRef = useRef(false);
+  const suppressScrollTimerRef = useRef<number | null>(null);
   const slashKeyHandlerRef = useRef<((event: KeyboardEvent) => boolean) | null>(null);
 
   const callbacksRef = useRef({ onChange, onScrollRatio, onSaveShortcut });
@@ -118,34 +360,63 @@ export const PreviewEditor = forwardRef<PreviewEditorHandle, PreviewEditorProps>
 
   useEffect(() => {
     updateNodeUiContext(theme, t);
+    const editor = editorRef.current;
+    if (editor && !editor.isDestroyed) {
+      editor.view.dispatch(
+        editor.state.tr.setMeta('uiContextSync', true).setMeta('addToHistory', false),
+      );
+    }
   }, [theme, t]);
+
+  useEffect(() => {
+    return () => {
+      if (suppressScrollTimerRef.current !== null) {
+        window.clearTimeout(suppressScrollTimerRef.current);
+        suppressScrollTimerRef.current = null;
+      }
+    };
+  }, []);
 
   useEffect(() => {
     const mountEl = mountRef.current;
     if (!mountEl) return;
 
     updateNodeUiContext(theme, t);
-    let initialDoc;
+    let initialDoc: JSONContent;
     try {
-      initialDoc = markdownToProseMirrorDoc(markdownText);
+      initialDoc = normalizeDocJsonForSchema(markdownToProseMirrorDoc(markdownText));
     } catch {
       initialDoc = { type: 'doc', content: [{ type: 'paragraph' }] };
     }
     lastSyncedMdRef.current = markdownText;
 
     const handleImages = async (files: FileList | File[], insertPos?: number) => {
-      const editor = editorRef.current;
-      if (!editor) return;
       const images = Array.from(files).filter((f) => f.type.startsWith('image/'));
       if (images.length === 0) return;
 
+      const prepared: Array<{ src: string; alt: string }> = [];
       for (const imgFile of images) {
         const dataUri = await fileToDataUri(imgFile);
-        const alt = sanitizeImageAlt(imgFile.name);
-        if (typeof insertPos === 'number') {
-          editor.chain().focus().insertContentAt(insertPos, { type: 'image', attrs: { src: dataUri, alt } }).run();
-        } else {
-          editor.chain().focus().setImage({ src: dataUri, alt }).run();
+        const alt = sanitizeImageAlt(imgFile.name, getNodeUiContext().t.toolbar.defaultImageAlt);
+        prepared.push({ src: dataUri, alt });
+      }
+
+      const currentEditor = editorRef.current;
+      if (!currentEditor || currentEditor.isDestroyed || prepared.length === 0) return;
+
+      if (typeof insertPos === 'number') {
+        const clampedPos = Math.max(0, Math.min(currentEditor.state.doc.content.size, insertPos));
+        currentEditor
+          .chain()
+          .focus()
+          .insertContentAt(
+            clampedPos,
+            prepared.map((img) => ({ type: 'image', attrs: img })),
+          )
+          .run();
+      } else {
+        for (const img of prepared) {
+          currentEditor.chain().focus().setImage(img).run();
         }
       }
     };
@@ -153,51 +424,21 @@ export const PreviewEditor = forwardRef<PreviewEditorHandle, PreviewEditorProps>
     const editor = new Editor({
       element: mountEl,
       content: initialDoc,
-      extensions: [
-        StarterKit.configure({
-          codeBlock: false,
-          link: {
-            openOnClick: false,
-            autolink: true,
-          },
-        }),
-        CodeBlockLowlight.configure({
-          lowlight,
-          defaultLanguage: 'plaintext',
-        }),
-        Table.configure({
-          resizable: false,
-        }),
-        TableRow,
-        AlignedTableHeader,
-        AlignedTableCell,
-        TaskList,
-        TaskItem.configure({
-          nested: true,
-        }),
-        Image.configure({
-          allowBase64: true,
-          inline: true,
-        }),
-        Placeholder.configure({
-          placeholder: () => t.blocks.placeholderEditor,
-        }),
-        FrontmatterExtension,
-        GithubAlertExtension,
-        MermaidExtension,
-        MathInlineExtension,
-        MathBlockExtension,
-        RawHtmlBlockExtension,
-        RawHtmlInlineExtension,
-      ],
+      extensions: createPreviewExtensions(),
       editorProps: {
         attributes: {
           class: 'preview-prosemirror',
           'data-testid': 'preview-editor',
         },
         handleKeyDown(_view, event) {
-          if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') {
+          if (
+            (event.ctrlKey || event.metaKey) &&
+            !event.shiftKey &&
+            !event.altKey &&
+            event.key.toLowerCase() === 's'
+          ) {
             event.preventDefault();
+            event.stopPropagation();
             callbacksRef.current.onSaveShortcut?.();
             return true;
           }
@@ -251,12 +492,34 @@ export const PreviewEditor = forwardRef<PreviewEditorHandle, PreviewEditorProps>
     if (markdownText === lastSyncedMdRef.current) return;
 
     try {
-      const docJson = markdownToProseMirrorDoc(markdownText);
-      const pmDoc = editor.schema.nodeFromJSON(docJson);
-      const tr = editor.state.tr
-        .replaceWith(0, editor.state.doc.content.size, pmDoc.content)
-        .setMeta('externalSync', true)
-        .setMeta('addToHistory', false);
+      const docJson = normalizeDocJsonForSchema(markdownToProseMirrorDoc(markdownText));
+      const nextDoc = editor.schema.nodeFromJSON(docJson);
+      const curDoc = editor.state.doc;
+
+      const diffStart = curDoc.content.findDiffStart(nextDoc.content);
+      if (diffStart === null) {
+        lastSyncedMdRef.current = markdownText;
+        return;
+      }
+
+      const diffEnd = curDoc.content.findDiffEnd(nextDoc.content);
+      let tr = editor.state.tr;
+      if (diffEnd) {
+        let { a: endA, b: endB } = diffEnd;
+        const overlap = diffStart - Math.min(endA, endB);
+        if (overlap > 0) {
+          endA += overlap;
+          endB += overlap;
+        }
+        tr = tr.replace(diffStart, endA, nextDoc.slice(diffStart, endB));
+        if (!tr.doc.eq(nextDoc)) {
+          tr = editor.state.tr.replaceWith(0, curDoc.content.size, nextDoc.content);
+        }
+      } else {
+        tr = tr.replaceWith(0, curDoc.content.size, nextDoc.content);
+      }
+
+      tr.setMeta('externalSync', true).setMeta('addToHistory', false);
       editor.view.dispatch(tr);
       lastSyncedMdRef.current = markdownText;
     } catch {
@@ -288,19 +551,27 @@ export const PreviewEditor = forwardRef<PreviewEditorHandle, PreviewEditorProps>
         headings[index] ??
         headings.find((el) => el.textContent?.trim() === text.trim());
       if (target) {
+        suppressScrollRef.current = true;
+        if (suppressScrollTimerRef.current !== null) {
+          window.clearTimeout(suppressScrollTimerRef.current);
+        }
         target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        suppressScrollTimerRef.current = window.setTimeout(() => {
+          suppressScrollRef.current = false;
+          suppressScrollTimerRef.current = null;
+        }, 650);
       }
     },
     async insertImageFromFile(file: File) {
-      const editor = editorRef.current;
-      if (!editor) return;
       const dataUri = await fileToDataUri(file);
-      const alt = sanitizeImageAlt(file.name);
+      const editor = editorRef.current;
+      if (!editor || editor.isDestroyed) return;
+      const alt = sanitizeImageAlt(file.name, getNodeUiContext().t.toolbar.defaultImageAlt);
       editor.chain().focus().setImage({ src: dataUri, alt }).run();
     },
     runAction(action: PreviewFormatAction) {
       const ed = editorRef.current;
-      if (!ed) return;
+      if (!ed || ed.isDestroyed) return;
       switch (action) {
         case 'bold':
           ed.chain().focus().toggleBold().run();
@@ -336,7 +607,7 @@ export const PreviewEditor = forwardRef<PreviewEditorHandle, PreviewEditorProps>
           ed.chain().focus().toggleBlockquote().run();
           break;
         case 'codeBlock':
-          ed.chain().focus().toggleCodeBlock().run();
+          ed.chain().focus().toggleCodeBlock({ language: '' }).run();
           break;
         case 'table':
           ed.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run();
@@ -353,9 +624,7 @@ export const PreviewEditor = forwardRef<PreviewEditorHandle, PreviewEditorProps>
           break;
         case 'mathInline': {
           const { from, to } = ed.state.selection;
-          const selectedText = !ed.state.selection.empty
-            ? ed.state.doc.textBetween(from, to, ' ').trim()
-            : '';
+          const selectedText = extractSelectionLatex(ed);
           ed
             .chain()
             .focus()
@@ -375,15 +644,21 @@ export const PreviewEditor = forwardRef<PreviewEditorHandle, PreviewEditorProps>
             .run();
           break;
         case 'alert':
-          ed
-            .chain()
-            .focus()
-            .insertContent({
-              type: 'githubAlert',
-              attrs: { alertType: 'NOTE' },
-              content: [{ type: 'paragraph' }],
-            })
-            .run();
+          if (ed.isActive('githubAlert')) {
+            ed.chain().focus().lift('githubAlert').run();
+          } else if (!ed.state.selection.empty) {
+            ed.chain().focus().wrapIn('githubAlert', { alertType: 'NOTE' }).run();
+          } else {
+            ed
+              .chain()
+              .focus()
+              .insertContent({
+                type: 'githubAlert',
+                attrs: { alertType: 'NOTE' },
+                content: [{ type: 'paragraph' }],
+              })
+              .run();
+          }
           break;
         case 'divider':
           ed.chain().focus().setHorizontalRule().run();

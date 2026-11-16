@@ -3,7 +3,20 @@ import type { Node as PMNode } from '@tiptap/pm/model';
 import { render } from 'preact';
 import { useNodeUiContext } from '../nodeUiContext';
 
-function RawHtmlBlockView({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+const INTERNAL_RAW_TOKEN =
+  typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+    ? crypto.randomUUID()
+    : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+
+function RawHtmlBlockView({
+  value,
+  onChange,
+  onEscape,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  onEscape?: () => void;
+}) {
   const { t } = useNodeUiContext();
   return (
     <div className="pm-rawhtml-card pm-interactive" contentEditable={false}>
@@ -18,6 +31,13 @@ function RawHtmlBlockView({ value, onChange }: { value: string; onChange: (v: st
         value={value}
         rows={Math.max(2, Math.min(8, value.split('\n').length))}
         onInput={(e) => onChange((e.currentTarget as HTMLTextAreaElement).value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Escape') {
+            e.preventDefault();
+            e.stopPropagation();
+            onEscape?.();
+          }
+        }}
       />
     </div>
   );
@@ -30,16 +50,49 @@ export const RawHtmlBlockExtension = Node.create({
 
   addAttributes() {
     return {
-      value: { default: '' },
+      value: {
+        default: '',
+        rendered: false,
+        parseHTML: (element) =>
+          element.getAttribute('data-internal-raw') === INTERNAL_RAW_TOKEN
+            ? (element.getAttribute('data-raw-value') ?? '')
+            : null,
+      },
     };
   },
 
   parseHTML() {
-    return [{ tag: 'div[data-type="raw-html-block"]' }];
+    return [
+      {
+        tag: 'div[data-type="raw-html-block"]',
+        priority: 60,
+        getAttrs: (element) => {
+          if (!(element instanceof HTMLElement) || element.getAttribute('data-internal-raw') !== INTERNAL_RAW_TOKEN) {
+            return false;
+          }
+          return {
+            value: element.getAttribute('data-raw-value') ?? '',
+          };
+        },
+      },
+    ];
   },
 
-  renderHTML({ HTMLAttributes }) {
-    return ['div', mergeAttributes(HTMLAttributes, { 'data-type': 'raw-html-block' })];
+  renderHTML({ node, HTMLAttributes }) {
+    const val = String(node.attrs.value ?? '');
+    return [
+      'div',
+      mergeAttributes(HTMLAttributes, {
+        'data-type': 'raw-html-block',
+        'data-internal-raw': INTERNAL_RAW_TOKEN,
+        'data-raw-value': val,
+      }),
+      val,
+    ];
+  },
+
+  renderText({ node }) {
+    return String(node.attrs.value ?? '');
   },
 
   addNodeView() {
@@ -59,9 +112,22 @@ export const RawHtmlBlockExtension = Node.create({
         );
       };
 
+      const refocusEditor = () => {
+        if (!editor.isDestroyed) {
+          editor.commands.focus();
+        }
+      };
+
       const mount = (pmNode: PMNode) => {
         currentNode = pmNode;
-        render(<RawHtmlBlockView value={String(pmNode.attrs.value ?? '')} onChange={updateVal} />, dom);
+        render(
+          <RawHtmlBlockView
+            value={String(pmNode.attrs.value ?? '')}
+            onChange={updateVal}
+            onEscape={refocusEditor}
+          />,
+          dom,
+        );
       };
       mount(node);
 
@@ -91,22 +157,49 @@ export const RawHtmlInlineExtension = Node.create({
 
   addAttributes() {
     return {
-      value: { default: '' },
+      value: {
+        default: '',
+        rendered: false,
+        parseHTML: (element) =>
+          element.getAttribute('data-internal-raw') === INTERNAL_RAW_TOKEN
+            ? (element.getAttribute('data-raw-value') ?? '')
+            : null,
+      },
     };
   },
 
   parseHTML() {
-    return [{ tag: 'code[data-type="raw-html-inline"]' }];
+    return [
+      {
+        tag: 'code[data-type="raw-html-inline"]',
+        priority: 60,
+        getAttrs: (element) => {
+          if (!(element instanceof HTMLElement) || element.getAttribute('data-internal-raw') !== INTERNAL_RAW_TOKEN) {
+            return false;
+          }
+          return {
+            value: element.getAttribute('data-raw-value') ?? '',
+          };
+        },
+      },
+    ];
   },
 
   renderHTML({ node, HTMLAttributes }) {
+    const val = String(node.attrs.value ?? '');
     return [
       'code',
       mergeAttributes(HTMLAttributes, {
         'data-type': 'raw-html-inline',
+        'data-internal-raw': INTERNAL_RAW_TOKEN,
+        'data-raw-value': val,
         class: 'pm-rawhtml-inline',
       }),
-      String(node.attrs.value ?? ''),
+      val,
     ];
+  },
+
+  renderText({ node }) {
+    return String(node.attrs.value ?? '');
   },
 });

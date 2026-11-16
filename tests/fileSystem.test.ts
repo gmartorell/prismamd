@@ -1,28 +1,44 @@
 import { describe, expect, it, vi } from 'vitest';
 
 const idbStore = new Map<string, unknown>();
+const idbWriteLog: Array<{ key: string; val: unknown }> = [];
+let idbSetHook: ((key: string, val: unknown) => Promise<void>) | null = null;
 
 vi.mock('idb-keyval', () => ({
   get: vi.fn(async (key: string) => idbStore.get(key)),
   set: vi.fn(async (key: string, val: unknown) => {
+    if (idbSetHook) {
+      await idbSetHook(key, val);
+    }
+    idbWriteLog.push({ key, val });
     idbStore.set(key, val);
   }),
 }));
 
 import {
+  buildVirtualDirectoryFromFiles,
+  consumeExtensionIncomingMarkdown,
+  createFileInFolder,
   ensureDirectoryPermission,
+  isDirectoryWritable,
   isMarkdownFilename,
   loadSavedDirectoryHandle,
   loadSessionFromStorage,
   mergeOpenedFilesIntoTabs,
   mergeRestoredSessionTabs,
+  normalizeDownloadFilename,
   normalizeViewMode,
   readDirectoryChildren,
+  readDiskFileIfChanged,
+  readFileFromHandle,
   saveDirectoryHandle,
+  saveSessionToStorage,
+  saveTabToDisk,
   subscribeLaunchQueue,
   updateDirectoryEntry,
   type EditorTab,
   type FolderEntry,
+  type PersistedSession,
 } from '../src/workspace/fileSystem';
 
 describe('normalizeViewMode', () => {
@@ -44,7 +60,7 @@ describe('normalizeViewMode', () => {
   });
 });
 
-describe('loadSessionFromStorage', () => {
+describe('loadSessionFromStorage & serialized saveSessionToStorage', () => {
   it('normalizes legacy human viewMode in persisted sessions', async () => {
     idbStore.clear();
     idbStore.set('prismamd.session.v1', {
@@ -60,9 +76,337 @@ describe('loadSessionFromStorage', () => {
     const { session } = await loadSessionFromStorage();
     expect(session?.viewMode).toBe('preview');
   });
+
+  it('serializes concurrent saveSessionToStorage writes without interleaving SESSION_KEY and FILE_HANDLES_KEY', async () => {
+    idbStore.clear();
+    idbWriteLog.length = 0;
+
+    let releaseFirstSessionSet!: () => void;
+    const firstSessionGate = new Promise<void>((resolve) => {
+      releaseFirstSessionSet = resolve;
+    });
+
+    let hookCalls = 0;
+    idbSetHook = async (key: string) => {
+      hookCalls += 1;
+      // Pause right on the first call's SESSION_KEY write while second save is already queued
+      if (hookCalls === 1 && key === 'prismamd.session.v1') {
+        await firstSessionGate;
+      }
+    };
+
+    const handleA = { kind: 'file', name: 'a.md' } as unknown as FileSystemFileHandle;
+    const handleB = { kind: 'file', name: 'b.md' } as unknown as FileSystemFileHandle;
+
+    const tabs1: EditorTab[] = [
+      {
+        id: 'scratchpad',
+        title: 'Quick Note',
+        content: '# Scratch',
+        savedContent: '# Scratch',
+        isScratchpad: true,
+        fileHandle: handleA, // Should also be stripped for scratchpad
+      },
+      {
+        id: 'tab-a',
+        title: 'a.md',
+        content: '# A1',
+        savedContent: '# A1',
+        fileHandle: handleA,
+        diskLastModified: 1000,
+      },
+    ];
+
+    const tabs2: EditorTab[] = [
+      {
+        id: 'tab-b',
+        title: 'b.md',
+        content: '# B2',
+        savedContent: '# B2',
+        fileHandle: handleB,
+        diskLastModified: 2000,
+      },
+    ];
+
+    const session1: PersistedSession = {
+      tabs: [{ id: 'tab-a', title: 'a.md', content: '# A1', savedContent: '# A1', diskLastModified: 1000 }],
+      activeTabId: 'tab-a',
+      viewMode: 'split',
+      theme: 'dark',
+      explorerOpen: true,
+      outlineOpen: false,
+      scrollSync: true,
+    };
+
+    const session2: PersistedSession = {
+      tabs: [{ id: 'tab-b', title: 'b.md', content: '# B2', savedContent: '# B2', diskLastModified: 2000 }],
+      activeTabId: 'tab-b',
+      viewMode: 'raw',
+      theme: 'sepia',
+      explorerOpen: false,
+      outlineOpen: true,
+      scrollSync: false,
+    };
+
+    const p1 = saveSessionToStorage(session1, tabs1);
+    const p2 = saveSessionToStorage(session2, tabs2);
+
+    // Let p2 enqueue before releasing p1
+    await Promise.resolve();
+    releaseFirstSessionSet();
+    await Promise.all([p1, p2]);
+    idbSetHook = null;
+
+    expect(idbWriteLog.map((entry) => entry.key)).toEqual([
+      'prismamd.session.v1',
+      'prismamd.fileHandles.v1',
+      'prismamd.session.v1',
+      'prismamd.fileHandles.v1',
+    ]);
+
+    const { session, fileHandles } = await loadSessionFromStorage();
+    expect(session?.activeTabId).toBe('tab-b');
+    expect(session?.tabs[0]?.diskLastModified).toBe(2000);
+    expect(Object.keys(fileHandles)).toEqual(['tab-b']);
+    expect(fileHandles['tab-b']).toBe(handleB);
+  });
 });
 
-describe('readDirectoryChildren and read-only folder support', () => {
+describe('createFileInFolder validation and overwrite protection', () => {
+  it('rejects empty, slash-containing, or dotfile names with INVALID_FILENAME', async () => {
+    const dir = {
+      getFileHandle: vi.fn(),
+    } as unknown as FileSystemDirectoryHandle;
+
+    await expect(createFileInFolder(dir, '')).rejects.toThrow('INVALID_FILENAME');
+    await expect(createFileInFolder(dir, '   ')).rejects.toThrow('INVALID_FILENAME');
+    await expect(createFileInFolder(dir, 'sub/note.md')).rejects.toThrow('INVALID_FILENAME');
+    await expect(createFileInFolder(dir, 'sub\\note.md')).rejects.toThrow('INVALID_FILENAME');
+    await expect(createFileInFolder(dir, '.hidden.md')).rejects.toThrow('INVALID_FILENAME');
+    await expect(createFileInFolder(dir, '..')).rejects.toThrow('INVALID_FILENAME');
+    expect(dir.getFileHandle).not.toHaveBeenCalled();
+  });
+
+  it('throws FILE_EXISTS:<name> without truncating or writing when target file already exists', async () => {
+    const createWritable = vi.fn();
+    const existingHandle = {
+      kind: 'file',
+      name: 'README.md',
+      createWritable,
+    } as unknown as FileSystemFileHandle;
+
+    const getFileHandle = vi.fn(async (_name: string, opts?: { create?: boolean }) => {
+      if (!opts?.create) {
+        return existingHandle;
+      }
+      throw new Error('Should never be called with create: true when file exists');
+    });
+
+    const dir = { getFileHandle } as unknown as FileSystemDirectoryHandle;
+
+    await expect(createFileInFolder(dir, 'README')).rejects.toThrow('FILE_EXISTS:README.md');
+    expect(getFileHandle).toHaveBeenCalledTimes(1);
+    expect(getFileHandle).toHaveBeenCalledWith('README.md', { create: false });
+    expect(createWritable).not.toHaveBeenCalled();
+  });
+
+  it('creates new file and returns lastModified when { create: false } rejects with NotFoundError', async () => {
+    let writtenData = '';
+    const newHandle = {
+      kind: 'file',
+      name: 'new-note.md',
+      createWritable: vi.fn(async () => ({
+        write: vi.fn(async (chunk: string) => {
+          writtenData = chunk;
+        }),
+        close: vi.fn(async () => undefined),
+      })),
+      getFile: vi.fn(async () => new File([writtenData], 'new-note.md', { lastModified: 1731700000123 })),
+    } as unknown as FileSystemFileHandle;
+
+    const getFileHandle = vi.fn(async (_name: string, opts?: { create?: boolean }) => {
+      if (!opts?.create) {
+        const err = new Error('Not found');
+        err.name = 'NotFoundError';
+        throw err;
+      }
+      return newHandle;
+    });
+
+    const dir = { getFileHandle } as unknown as FileSystemDirectoryHandle;
+    const res = await createFileInFolder(dir, undefined, 'new-note.md');
+
+    expect(res.title).toBe('new-note.md');
+    expect(res.content).toBe('# new-note\n\n');
+    expect(res.lastModified).toBe(1731700000123);
+    expect(writtenData).toBe('# new-note\n\n');
+    expect(getFileHandle).toHaveBeenNthCalledWith(1, 'new-note.md', { create: false });
+    expect(getFileHandle).toHaveBeenNthCalledWith(2, 'new-note.md', { create: true });
+  });
+});
+
+describe('readDiskFileIfChanged, readFileFromHandle & OS read-only Save-As fallback', () => {
+  it('returns changed: false when lastModified matches knownLastModified, and changed: true when modified', async () => {
+    let currentContent = '# Initial';
+    let currentMtime = 5000;
+
+    const handle = {
+      kind: 'file',
+      name: 'doc.md',
+      queryPermission: vi.fn(async () => 'granted' as PermissionState),
+      getFile: vi.fn(async () => new File([currentContent], 'doc.md', { lastModified: currentMtime })),
+    } as unknown as FileSystemFileHandle;
+
+    const initialRead = await readFileFromHandle(handle, 'doc.md');
+    expect(initialRead).toEqual({
+      title: 'doc.md',
+      content: '# Initial',
+      fileHandle: handle,
+      relativePath: 'doc.md',
+      lastModified: 5000,
+    });
+
+    const unchanged = await readDiskFileIfChanged(handle, 5000);
+    expect(unchanged).toEqual({ changed: false, lastModified: 5000 });
+
+    currentContent = '# Externally Updated';
+    currentMtime = 6500;
+    const changed = await readDiskFileIfChanged(handle, 5000);
+    expect(changed).toEqual({
+      changed: true,
+      content: '# Externally Updated',
+      lastModified: 6500,
+    });
+  });
+
+  it('catches permission / SecurityError rejections cleanly in readDiskFileIfChanged', async () => {
+    const throwingHandle = {
+      kind: 'file',
+      name: 'locked.md',
+      queryPermission: vi.fn(async () => 'prompt' as PermissionState),
+      requestPermission: vi.fn(async () => {
+        const err = new Error('User activation is required');
+        err.name = 'SecurityError';
+        throw err;
+      }),
+      getFile: vi.fn(),
+    } as unknown as FileSystemFileHandle;
+
+    await expect(readDiskFileIfChanged(throwingHandle, 1000)).resolves.toEqual({ changed: false });
+    expect(throwingHandle.getFile).not.toHaveBeenCalled();
+  });
+
+  it('falls back to showSaveFilePicker with usedFallbackSaveAs: true when OS file is read-only', async () => {
+    const readOnlyHandle = {
+      kind: 'file',
+      name: 'readonly.md',
+      queryPermission: vi.fn(async () => 'granted' as PermissionState),
+      createWritable: vi.fn(async () => {
+        const err = new Error('OS file is read-only');
+        err.name = 'NoModificationAllowedError';
+        throw err;
+      }),
+    } as unknown as FileSystemFileHandle;
+
+    let savedCopyText = '';
+    const copyHandle = {
+      kind: 'file',
+      name: 'readonly-copy.md',
+      createWritable: vi.fn(async () => ({
+        write: vi.fn(async (txt: string) => {
+          savedCopyText = txt;
+        }),
+        close: vi.fn(async () => undefined),
+      })),
+      getFile: vi.fn(async () => new File([savedCopyText], 'readonly-copy.md', { lastModified: 9999 })),
+    } as unknown as FileSystemFileHandle;
+
+    const origSavePicker = window.showSaveFilePicker;
+    window.showSaveFilePicker = vi.fn(async () => copyHandle);
+
+    try {
+      const tab: EditorTab = {
+        id: 'tab-ro',
+        title: 'readonly.md',
+        content: '# Edited Locally',
+        savedContent: '# Original',
+        fileHandle: readOnlyHandle,
+      };
+
+      const res = await saveTabToDisk(tab, false, 'quick-note.md');
+      expect(res).toEqual({
+        title: 'readonly-copy.md',
+        fileHandle: copyHandle,
+        lastModified: 9999,
+        usedFallbackSaveAs: true,
+      });
+      expect(savedCopyText).toBe('# Edited Locally');
+      expect(window.showSaveFilePicker).toHaveBeenCalledWith(
+        expect.objectContaining({ suggestedName: 'readonly.md' }),
+      );
+    } finally {
+      window.showSaveFilePicker = origSavePicker;
+    }
+  });
+
+  it('preserves .MD, .mdx, and .mdown extensions without appending duplicate .md', () => {
+    expect(normalizeDownloadFilename('README.MD')).toBe('README.MD');
+    expect(normalizeDownloadFilename('page.mdx')).toBe('page.mdx');
+    expect(normalizeDownloadFilename('notes.mdown')).toBe('notes.mdown');
+    expect(normalizeDownloadFilename('guide.markdown')).toBe('guide.markdown');
+    expect(normalizeDownloadFilename('untitled')).toBe('untitled.md');
+  });
+});
+
+describe('consumeExtensionIncomingMarkdown Side Panel guard', () => {
+  it('ignores and preserves prismamd_incoming_md when isSidePanel=true and targetSurface="tab"', async () => {
+    const storageMap: Record<string, unknown> = {
+      prismamd_incoming_md: {
+        filename: 'viewer-doc.md',
+        content: '# From Viewer',
+        sourceUrl: 'https://example.com/viewer-doc.md',
+        targetSurface: 'tab',
+      },
+    };
+
+    const removeMock = vi.fn(async (key: string) => {
+      delete storageMap[key];
+    });
+
+    const prevChrome = (globalThis as { chrome?: unknown }).chrome;
+    (globalThis as { chrome?: unknown }).chrome = {
+      storage: {
+        local: {
+          get: vi.fn(async (key: string) => ({ [key]: storageMap[key] })),
+          remove: removeMock,
+        },
+      },
+    };
+
+    try {
+      // Side Panel must NOT consume or delete Full-Tab payload
+      const sidePanelResult = await consumeExtensionIncomingMarkdown(true);
+      expect(sidePanelResult).toBeNull();
+      expect(removeMock).not.toHaveBeenCalled();
+      expect(storageMap.prismamd_incoming_md).toBeDefined();
+
+      // Full-Tab consumes and deletes the payload cleanly
+      const fullTabResult = await consumeExtensionIncomingMarkdown(false);
+      expect(fullTabResult).toEqual({
+        filename: 'viewer-doc.md',
+        content: '# From Viewer',
+        sourceUrl: 'https://example.com/viewer-doc.md',
+        targetSurface: 'tab',
+      });
+      expect(removeMock).toHaveBeenCalledWith('prismamd_incoming_md');
+      expect(storageMap.prismamd_incoming_md).toBeUndefined();
+    } finally {
+      (globalThis as { chrome?: unknown }).chrome = prevChrome;
+    }
+  });
+});
+
+describe('readDirectoryChildren, read-only folder support & webkitdirectory virtual tree', () => {
   it('loads a single level skipping heavy directories and ignoring broken entries', async () => {
     const fakeEntries = [
       { kind: 'directory', name: '__pycache__' },
@@ -95,6 +439,45 @@ describe('readDirectoryChildren and read-only folder support', () => {
       'file:TEST.md',
     ]);
     expect(list[0].loaded).toBe(false);
+  });
+
+  it('builds a read-only virtual directory tree from webkitdirectory File blobs', async () => {
+    const f1 = new File(['# Root Readme'], 'README.md', { type: 'text/markdown', lastModified: 1111 });
+    Object.defineProperty(f1, 'webkitRelativePath', { value: 'Vault/README.md' });
+
+    const f2 = new File(['# Nested Guide'], 'guide.mdx', { type: 'text/markdown', lastModified: 2222 });
+    Object.defineProperty(f2, 'webkitRelativePath', { value: 'Vault/docs/guide.mdx' });
+
+    const fIgnored = new File(['ignored'], 'pkg.md', { type: 'text/markdown' });
+    Object.defineProperty(fIgnored, 'webkitRelativePath', { value: 'Vault/node_modules/pkg.md' });
+
+    const fTxt = new File(['plain'], 'notes.txt', { type: 'text/plain' });
+    Object.defineProperty(fTxt, 'webkitRelativePath', { value: 'Vault/notes.txt' });
+
+    const virtualRoot = buildVirtualDirectoryFromFiles([f1, f2, fIgnored, fTxt]);
+    expect(virtualRoot).not.toBeNull();
+    expect(virtualRoot!.name).toBe('Vault');
+    expect(virtualRoot!.readOnly).toBe(true);
+    expect(await isDirectoryWritable(virtualRoot!)).toBe(false);
+
+    const topEntries = await readDirectoryChildren(virtualRoot!);
+    expect(topEntries.map((e) => `${e.kind}:${e.path}:${Boolean(e.readOnly)}`)).toEqual([
+      'directory:docs:true',
+      'file:README.md:true',
+    ]);
+
+    const subEntries = await readDirectoryChildren(
+      topEntries[0].handle as FileSystemDirectoryHandle,
+      topEntries[0].path,
+    );
+    expect(subEntries.map((e) => e.path)).toEqual(['docs/guide.mdx']);
+
+    const readSub = await readFileFromHandle(
+      subEntries[0].handle as FileSystemFileHandle,
+      subEntries[0].path,
+    );
+    expect(readSub.content).toBe('# Nested Guide');
+    expect(readSub.lastModified).toBe(2222);
   });
 
   it('updates lazy directory children immutably via updateDirectoryEntry', () => {
@@ -219,10 +602,11 @@ describe('markdown-only filtering and PWA launchQueue coordination', () => {
 
     const launched = mergeOpenedFilesIntoTabs(
       [scratchpad],
-      [{ title: 'explorer.md', content: '# Opened from Windows', relativePath: 'explorer.md' }],
+      [{ title: 'explorer.md', content: '# Opened from Windows', relativePath: 'explorer.md', lastModified: 4321 }],
       () => 'tab-launched',
     );
     expect(launched.targetActiveId).toBe('tab-launched');
+    expect(launched.tabs[1]?.diskLastModified).toBe(4321);
 
     const restoredSession: EditorTab[] = [
       scratchpad,

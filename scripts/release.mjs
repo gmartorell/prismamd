@@ -3,25 +3,47 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
+function pad2(n) {
+  return String(n).padStart(2, '0');
+}
+
 export function formatLocalDateParts(date = new Date()) {
   const year = date.getFullYear();
   const month = date.getMonth() + 1;
   const day = date.getDate();
-  const pad = (n) => String(n).padStart(2, '0');
   return {
     year,
     month,
     day,
-    isoDate: `${year}-${pad(month)}-${pad(day)}`,
+    isoDate: `${year}-${pad2(month)}-${pad2(day)}`,
     prefix: `${year}.${month}.${day}.`,
   };
 }
 
-export function computeNextDailyVersion(changelogText, date = new Date()) {
-  const { prefix, isoDate } = formatLocalDateParts(date);
+function parseCalVerParts(versionStr) {
+  if (typeof versionStr !== 'string') return null;
+  const match = versionStr
+    .trim()
+    .replace(/^v/i, '')
+    .replace(/-/g, '.')
+    .match(/^(\d+)\.(\d+)\.(\d+)\.(\d+)$/);
+  if (!match) return null;
+  return [Number(match[1]), Number(match[2]), Number(match[3]), Number(match[4])];
+}
+
+export function compareCalVer(a, b) {
+  const partsA = Array.isArray(a) ? a : parseCalVerParts(a) ?? [0, 0, 0, 0];
+  const partsB = Array.isArray(b) ? b : parseCalVerParts(b) ?? [0, 0, 0, 0];
+  for (let i = 0; i < 4; i += 1) {
+    if (partsA[i] > partsB[i]) return 1;
+    if (partsA[i] < partsB[i]) return -1;
+  }
+  return 0;
+}
+
+function findMaxDailyForPrefix(changelogText, prefix) {
   const versionRegex = /^## \[(\d+)\.(\d+)\.(\d+)\.(\d+)\]/gm;
   let maxDaily = 0;
-
   let match;
   while ((match = versionRegex.exec(changelogText)) !== null) {
     const candidatePrefix = `${Number(match[1])}.${Number(match[2])}.${Number(match[3])}.`;
@@ -32,9 +54,35 @@ export function computeNextDailyVersion(changelogText, date = new Date()) {
       }
     }
   }
+  return maxDaily;
+}
+
+export function computeNextDailyVersion(changelogText, date = new Date(), currentManifestVersion = '') {
+  let { year, month, day, prefix, isoDate } = formatLocalDateParts(date);
+  let nextDaily = findMaxDailyForPrefix(changelogText, prefix) + 1;
+
+  const manifestParts = parseCalVerParts(currentManifestVersion);
+  if (manifestParts) {
+    const [mYear, mMonth, mDay, mDaily] = manifestParts;
+    const candidateParts = [year, month, day, nextDaily];
+    if (compareCalVer(candidateParts, manifestParts) <= 0) {
+      const dateCmp = compareCalVer([year, month, day, 0], [mYear, mMonth, mDay, 0]);
+      if (dateCmp < 0) {
+        year = mYear;
+        month = mMonth;
+        day = mDay;
+        prefix = `${year}.${month}.${day}.`;
+        isoDate = `${year}-${pad2(month)}-${pad2(day)}`;
+        const changelogMaxOnManifestDate = findMaxDailyForPrefix(changelogText, prefix);
+        nextDaily = Math.max(mDaily, changelogMaxOnManifestDate) + 1;
+      } else {
+        nextDaily = mDaily + 1;
+      }
+    }
+  }
 
   return {
-    version: `${prefix}${maxDaily + 1}`,
+    version: `${prefix}${nextDaily}`,
     isoDate,
   };
 }
@@ -55,7 +103,16 @@ function collectGitSubjectsSinceLastVersion() {
       }).trim();
       if (lastTag) range = `${lastTag}..HEAD`;
     } catch {
-      // No tags yet; inspect recent commits touching non-release files
+      try {
+        const lastReleaseSha = execFileSync(
+          'git',
+          ['log', '--grep=^chore(release):', '--pretty=format:%H', '-n', '1'],
+          { stdio: ['ignore', 'pipe', 'ignore'], encoding: 'utf8' },
+        ).trim();
+        if (lastReleaseSha) range = `${lastReleaseSha}..HEAD`;
+      } catch {
+        // Fallback to recent HEAD history
+      }
     }
 
     const log = execFileSync('git', ['log', range, '--pretty=format:%s', '-n', '30'], {
@@ -76,18 +133,45 @@ function collectGitSubjectsSinceLastVersion() {
 export function buildReleaseSection(version, isoDate, unreleasedBody, extraNotes = [], gitSubjects = []) {
   const trimmedBody = unreleasedBody.trim();
   const lines = [`## [${version}] - ${isoDate}`, ''];
+  const formattedNotes = extraNotes
+    .map((entry) => String(entry).trim())
+    .filter((entry) => entry.length > 0)
+    .map((entry) => `- ${entry.replace(/^-\s*/, '')}`);
 
   if (trimmedBody.length > 0) {
-    lines.push(trimmedBody);
+    if (formattedNotes.length === 0) {
+      lines.push(trimmedBody);
+    } else if (/^### Cambiado\b/m.test(trimmedBody)) {
+      const cambiadoHeadingRe = /^### Cambiado\b[^\n]*$/m;
+      const match = cambiadoHeadingRe.exec(trimmedBody);
+      if (match) {
+        const afterHeadingIdx = match.index + match[0].length;
+        const rest = trimmedBody.slice(afterHeadingIdx);
+        const nextSubheading = rest.match(/\n### /);
+        const insertPos = nextSubheading
+          ? afterHeadingIdx + nextSubheading.index
+          : trimmedBody.length;
+        const beforeInsert = trimmedBody.slice(0, insertPos).trimEnd();
+        const afterInsert = trimmedBody.slice(insertPos);
+        lines.push(`${beforeInsert}\n${formattedNotes.join('\n')}${afterInsert}`);
+      } else {
+        lines.push(trimmedBody, '', '### Cambiado', ...formattedNotes);
+      }
+    } else {
+      lines.push(trimmedBody, '', '### Cambiado', ...formattedNotes);
+    }
   } else {
-    const entries = [...extraNotes, ...gitSubjects];
+    const entries = [
+      ...formattedNotes,
+      ...gitSubjects
+        .map((entry) => String(entry).trim())
+        .filter((entry) => entry.length > 0)
+        .map((entry) => `- ${entry.replace(/^-\s*/, '')}`),
+    ];
     if (entries.length === 0) {
       lines.push('### Cambiado', '- Actualización de mantenimiento y compilación.');
     } else {
-      lines.push('### Cambiado');
-      for (const entry of entries) {
-        lines.push(`- ${entry.replace(/^-\s*/, '')}`);
-      }
+      lines.push('### Cambiado', ...entries);
     }
   }
 
@@ -134,6 +218,16 @@ function parseCliArgs(argv) {
   return { notes, dryRun, buildAfter };
 }
 
+function readCurrentManifestVersion(root) {
+  try {
+    const manifestPath = path.join(root, 'extension', 'manifest.json');
+    const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+    return typeof manifest.version === 'string' ? manifest.version.trim() : '';
+  } catch {
+    return '';
+  }
+}
+
 function updateProjectManifests(root, version) {
   const manifestPath = path.join(root, 'extension', 'manifest.json');
   const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
@@ -156,9 +250,10 @@ function main() {
   const root = process.cwd();
   const changelogPath = path.join(root, 'CHANGELOG.md');
   const changelogText = fs.readFileSync(changelogPath, 'utf8');
+  const currentManifestVersion = readCurrentManifestVersion(root);
 
   const { notes, dryRun, buildAfter } = parseCliArgs(process.argv.slice(2));
-  const { version, isoDate } = computeNextDailyVersion(changelogText);
+  const { version, isoDate } = computeNextDailyVersion(changelogText, new Date(), currentManifestVersion);
   const gitSubjects = notes.length === 0 ? collectGitSubjectsSinceLastVersion() : [];
   const nextChangelog = applyReleaseToChangelog(changelogText, version, isoDate, notes, gitSubjects);
 

@@ -20,11 +20,14 @@ export function CommandPalette({ open, commands, onClose }: CommandPaletteProps)
   const [query, setQuery] = useState('');
   const [selectedIndex, setSelectedIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const listRef = useRef<HTMLDivElement | null>(null);
+  const scrollOnSelectRef = useRef(false);
 
   useEffect(() => {
     if (open) {
       setQuery('');
       setSelectedIndex(0);
+      scrollOnSelectRef.current = false;
       window.setTimeout(() => inputRef.current?.focus(), 10);
     }
   }, [open]);
@@ -43,28 +46,49 @@ export function CommandPalette({ open, commands, onClose }: CommandPaletteProps)
     setSelectedIndex(0);
   }, [query]);
 
+  useEffect(() => {
+    if (!open || !scrollOnSelectRef.current) return;
+    scrollOnSelectRef.current = false;
+    const activeEl = listRef.current?.querySelector<HTMLElement>('.palette-item.selected');
+    activeEl?.scrollIntoView?.({ block: 'nearest' });
+  }, [open, selectedIndex]);
+
   if (!open) return null;
 
   return (
     <div className="palette-backdrop" onMouseDown={onClose}>
-      <div className="palette-modal" onMouseDown={(e) => e.stopPropagation()}>
+      <div
+        className="palette-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-label={t.toolbar.commandPalette}
+        onMouseDown={(e) => e.stopPropagation()}
+      >
         <input
           ref={inputRef}
           type="text"
           className="palette-input"
           value={query}
+          aria-label={t.palette.placeholder}
           placeholder={t.palette.placeholder}
           onInput={(e) => setQuery((e.currentTarget as HTMLInputElement).value)}
           onKeyDown={(e) => {
             if (e.key === 'Escape') {
               e.preventDefault();
+              e.stopPropagation();
               onClose();
             } else if (e.key === 'ArrowDown') {
               e.preventDefault();
-              if (filtered.length > 0) setSelectedIndex((i) => (i + 1) % filtered.length);
+              if (filtered.length > 0) {
+                scrollOnSelectRef.current = true;
+                setSelectedIndex((i) => (i + 1) % filtered.length);
+              }
             } else if (e.key === 'ArrowUp') {
               e.preventDefault();
-              if (filtered.length > 0) setSelectedIndex((i) => (i - 1 + filtered.length) % filtered.length);
+              if (filtered.length > 0) {
+                scrollOnSelectRef.current = true;
+                setSelectedIndex((i) => (i - 1 + filtered.length) % filtered.length);
+              }
             } else if (e.key === 'Enter' && filtered.length > 0) {
               e.preventDefault();
               const chosen = filtered[selectedIndex] ?? filtered[0];
@@ -73,7 +97,7 @@ export function CommandPalette({ open, commands, onClose }: CommandPaletteProps)
             }
           }}
         />
-        <div className="palette-list">
+        <div ref={listRef} className="palette-list">
           {filtered.length === 0 ? (
             <div className="palette-empty">{t.palette.noResults}</div>
           ) : (

@@ -29,7 +29,9 @@ export function getNodeUiContext(): NodeUiState {
 
 export function subscribeNodeUiContext(listener: (state: NodeUiState) => void): () => void {
   listeners.add(listener);
-  return () => listeners.delete(listener);
+  return () => {
+    listeners.delete(listener);
+  };
 }
 
 export function useNodeUiContext(): NodeUiState {

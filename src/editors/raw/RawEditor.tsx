@@ -2,8 +2,21 @@ import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirro
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
 import { HighlightStyle, bracketMatching, syntaxHighlighting } from '@codemirror/language';
 import { languages } from '@codemirror/language-data';
-import { highlightSelectionMatches, openSearchPanel, search, searchKeymap } from '@codemirror/search';
-import { Annotation, EditorSelection, EditorState } from '@codemirror/state';
+import {
+  highlightSelectionMatches,
+  openSearchPanel,
+  search,
+  searchKeymap,
+  searchPanelOpen,
+} from '@codemirror/search';
+import {
+  Annotation,
+  Compartment,
+  EditorSelection,
+  EditorState,
+  Prec,
+  Transaction,
+} from '@codemirror/state';
 import {
   EditorView,
   drawSelection,
@@ -18,7 +31,10 @@ import { useEffect, useImperativeHandle, useRef } from 'preact/hooks';
 import { useI18n } from '../../i18n';
 import { fileToMarkdownImage } from '../../markdown/imageDataUri';
 import type { ThemeMode } from '../../renderers/mermaidRenderer';
-import { createBase64FoldExtension, type Base64FoldLabels } from './base64FoldExtension';
+import {
+  createBase64FoldExtension,
+  createBase64LabelsExtension,
+} from './base64FoldExtension';
 
 export const ExternalSyncAnnotation = Annotation.define<boolean>();
 
@@ -62,7 +78,18 @@ const markdownHighlightStyle = HighlightStyle.define([
   { tag: tags.processingInstruction, color: 'var(--accent)' },
 ]);
 
-function computeMinimalDiff(oldText: string, newText: string): { from: number; to: number; insert: string } {
+function isHighSurrogate(code: number): boolean {
+  return code >= 0xd800 && code <= 0xdbff;
+}
+
+function isLowSurrogate(code: number): boolean {
+  return code >= 0xdc00 && code <= 0xdfff;
+}
+
+export function computeMinimalDiff(
+  oldText: string,
+  newText: string,
+): { from: number; to: number; insert: string } {
   if (oldText === newText) {
     return { from: 0, to: 0, insert: '' };
   }
@@ -71,6 +98,11 @@ function computeMinimalDiff(oldText: string, newText: string): { from: number; t
   while (start < minLen && oldText.charCodeAt(start) === newText.charCodeAt(start)) {
     start += 1;
   }
+  // Never split a UTF-16 surrogate pair at the leading boundary
+  if (start > 0 && isHighSurrogate(oldText.charCodeAt(start - 1))) {
+    start -= 1;
+  }
+
   let oldEnd = oldText.length;
   let newEnd = newText.length;
   while (
@@ -81,6 +113,12 @@ function computeMinimalDiff(oldText: string, newText: string): { from: number; t
     oldEnd -= 1;
     newEnd -= 1;
   }
+  // Never split a UTF-16 surrogate pair at the trailing boundary
+  if (oldEnd < oldText.length && newEnd < newText.length && isLowSurrogate(oldText.charCodeAt(oldEnd))) {
+    oldEnd += 1;
+    newEnd += 1;
+  }
+
   return {
     from: start,
     to: oldEnd,
@@ -88,25 +126,135 @@ function computeMinimalDiff(oldText: string, newText: string): { from: number; t
   };
 }
 
-function toggleMarkdownWrap(view: EditorView, before: string, after = before): boolean {
+function countOuterAsterisks(state: EditorState, from: number, to: number): number {
+  let left = 0;
+  while (left < 3 && from - 1 - left >= 0 && state.sliceDoc(from - 1 - left, from - left) === '*') {
+    left += 1;
+  }
+  let right = 0;
+  while (
+    right < 3 &&
+    to + right < state.doc.length &&
+    state.sliceDoc(to + right, to + 1 + right) === '*'
+  ) {
+    right += 1;
+  }
+  return Math.min(left, right);
+}
+
+function countInnerAsterisks(selected: string): number {
+  let lead = 0;
+  while (lead < 3 && lead < selected.length && selected[lead] === '*') {
+    lead += 1;
+  }
+  let trail = 0;
+  while (trail < 3 && trail < selected.length && selected[selected.length - 1 - trail] === '*') {
+    trail += 1;
+  }
+  const paired = Math.min(lead, trail);
+  return selected.length >= paired * 2 ? paired : 0;
+}
+
+export function toggleMarkdownWrap(view: EditorView, before: string, after = before): boolean {
   const { state } = view;
   const range = state.selection.main;
   const selected = state.sliceDoc(range.from, range.to);
-  if (selected.startsWith(before) && selected.endsWith(after) && selected.length >= before.length + after.length) {
-    const unwrapped = selected.slice(before.length, selected.length - after.length);
-    view.dispatch({
-      changes: { from: range.from, to: range.to, insert: unwrapped },
-      selection: EditorSelection.range(range.from, range.from + unwrapped.length),
-    });
-  } else {
+
+  if ((before === '*' && after === '*') || (before === '**' && after === '**')) {
+    const markerLen = before.length; // 1 for italic `*`, 2 for bold `**`
+    const outerStars = countOuterAsterisks(state, range.from, range.to);
+    const innerStars = outerStars === 0 ? countInnerAsterisks(selected) : 0;
+
+    const hasOuterFormat =
+      markerLen === 1 ? outerStars === 1 || outerStars === 3 : outerStars >= 2;
+    const hasInnerFormat =
+      markerLen === 1 ? innerStars === 1 || innerStars === 3 : innerStars >= 2;
+
+    if (hasOuterFormat) {
+      view.dispatch({
+        changes: [
+          { from: range.from - markerLen, to: range.from, insert: '' },
+          { from: range.to, to: range.to + markerLen, insert: '' },
+        ],
+        selection:
+          range.from === range.to
+            ? EditorSelection.cursor(range.from - markerLen)
+            : EditorSelection.range(range.from - markerLen, range.to - markerLen),
+      });
+      return true;
+    }
+
+    if (hasInnerFormat) {
+      const unwrapped = selected.slice(markerLen, selected.length - markerLen);
+      view.dispatch({
+        changes: { from: range.from, to: range.to, insert: unwrapped },
+        selection:
+          unwrapped.length > 0
+            ? EditorSelection.range(range.from, range.from + unwrapped.length)
+            : EditorSelection.cursor(range.from),
+      });
+      return true;
+    }
+
     const insert = `${before}${selected}${after}`;
     view.dispatch({
       changes: { from: range.from, to: range.to, insert },
-      selection: selected.length > 0
+      selection:
+        selected.length > 0
+          ? EditorSelection.range(
+              range.from + markerLen,
+              range.from + markerLen + selected.length,
+            )
+          : EditorSelection.cursor(range.from + markerLen),
+    });
+    return true;
+  }
+
+  // Generic delimiter pair (`backtick`, `$`, `~~`, etc.)
+  const hasSurroundingWrap =
+    range.from >= before.length &&
+    range.to + after.length <= state.doc.length &&
+    state.sliceDoc(range.from - before.length, range.from) === before &&
+    state.sliceDoc(range.to, range.to + after.length) === after;
+
+  if (hasSurroundingWrap) {
+    view.dispatch({
+      changes: [
+        { from: range.from - before.length, to: range.from, insert: '' },
+        { from: range.to, to: range.to + after.length, insert: '' },
+      ],
+      selection:
+        range.from === range.to
+          ? EditorSelection.cursor(range.from - before.length)
+          : EditorSelection.range(range.from - before.length, range.to - before.length),
+    });
+    return true;
+  }
+
+  if (
+    selected.startsWith(before) &&
+    selected.endsWith(after) &&
+    selected.length >= before.length + after.length
+  ) {
+    const unwrapped = selected.slice(before.length, selected.length - after.length);
+    view.dispatch({
+      changes: { from: range.from, to: range.to, insert: unwrapped },
+      selection:
+        unwrapped.length > 0
+          ? EditorSelection.range(range.from, range.from + unwrapped.length)
+          : EditorSelection.cursor(range.from),
+    });
+    return true;
+  }
+
+  const insert = `${before}${selected}${after}`;
+  view.dispatch({
+    changes: { from: range.from, to: range.to, insert },
+    selection:
+      selected.length > 0
         ? EditorSelection.range(range.from + before.length, range.from + before.length + selected.length)
         : EditorSelection.cursor(range.from + before.length),
-    });
-  }
+  });
   return true;
 }
 
@@ -117,36 +265,63 @@ export const RawEditor = forwardRef<RawEditorHandle, RawEditorProps>(function Ra
   const { t } = useI18n();
   const hostRef = useRef<HTMLDivElement | null>(null);
   const viewRef = useRef<EditorView | null>(null);
+  const labelsCompartmentRef = useRef<Compartment>(new Compartment());
   const latestMarkdownRef = useRef(markdownText);
   const suppressScrollRef = useRef(false);
 
   const callbacksRef = useRef({ onChange, onCursorChange, onScrollRatio, onSaveShortcut });
   callbacksRef.current = { onChange, onCursorChange, onScrollRatio, onSaveShortcut };
 
-  const labelsRef = useRef<Base64FoldLabels>(t.base64);
-  labelsRef.current = t.base64;
+  const i18nRef = useRef(t);
+  i18nRef.current = t;
 
   useEffect(() => {
     const host = hostRef.current;
     if (!host) return;
 
-    const handleImageFiles = async (files: FileList | null | undefined, pos?: number) => {
-      const view = viewRef.current;
-      if (!view || !files || files.length === 0) return false;
+    let destroyed = false;
+    const labelsCompartment = new Compartment();
+    labelsCompartmentRef.current = labelsCompartment;
+
+    const handleImageFiles = async (
+      targetView: EditorView,
+      files: FileList | null | undefined,
+      pos?: number,
+    ) => {
+      if (destroyed || !files || files.length === 0) return false;
 
       const imageFiles = Array.from(files).filter((f) => f.type.startsWith('image/'));
       if (imageFiles.length === 0) return false;
 
       const snippets: string[] = [];
+      const fallbackAlt = i18nRef.current.toolbar.defaultImageAlt;
       for (const file of imageFiles) {
-        const res = await fileToMarkdownImage(file);
-        snippets.push(res.markdown);
+        try {
+          const res = await fileToMarkdownImage(file, fallbackAlt);
+          snippets.push(res.markdown);
+        } catch {
+          // Ignore unreadable image file without throwing unhandled rejection
+        }
       }
+      if (snippets.length === 0) return false;
+
+      const activeView = viewRef.current;
+      if (destroyed || !activeView || activeView !== targetView) return false;
+
       const insertText = snippets.join('\n');
-      const targetPos = pos ?? view.state.selection.main.from;
-      view.dispatch({
-        changes: { from: targetPos, to: pos ?? view.state.selection.main.to, insert: insertText },
-        selection: EditorSelection.cursor(targetPos + insertText.length),
+      const docLen = activeView.state.doc.length;
+      const from =
+        typeof pos === 'number'
+          ? Math.max(0, Math.min(docLen, pos))
+          : activeView.state.selection.main.from;
+      const to =
+        typeof pos === 'number'
+          ? from
+          : activeView.state.selection.main.to;
+
+      activeView.dispatch({
+        changes: { from, to, insert: insertText },
+        selection: EditorSelection.cursor(from + insertText.length),
       });
       return true;
     };
@@ -189,6 +364,7 @@ export const RawEditor = forwardRef<RawEditorHandle, RawEditorProps>(function Ra
       },
     });
 
+    const initialLabels = i18nRef.current.base64;
     const state = EditorState.create({
       doc: markdownText,
       extensions: [
@@ -203,8 +379,58 @@ export const RawEditor = forwardRef<RawEditorHandle, RawEditorProps>(function Ra
         EditorView.lineWrapping,
         markdown({ base: markdownLanguage, codeLanguages: languages }),
         syntaxHighlighting(markdownHighlightStyle),
-        createBase64FoldExtension(() => labelsRef.current),
+        createBase64FoldExtension(initialLabels),
+        labelsCompartment.of(createBase64LabelsExtension(initialLabels)),
         cmTheme,
+        Prec.high(
+          EditorView.domEventHandlers({
+            keydown(event) {
+              if (
+                (event.ctrlKey || event.metaKey) &&
+                !event.shiftKey &&
+                !event.altKey &&
+                event.key.toLowerCase() === 's'
+              ) {
+                event.preventDefault();
+                event.stopPropagation();
+                callbacksRef.current.onSaveShortcut?.();
+                return true;
+              }
+              return false;
+            },
+          }),
+        ),
+        EditorView.domEventHandlers({
+          paste(event, view) {
+            const files = event.clipboardData?.files;
+            if (files && Array.from(files).some((f) => f.type.startsWith('image/'))) {
+              event.preventDefault();
+              void handleImageFiles(view, files);
+              return true;
+            }
+            return false;
+          },
+          drop(event, view) {
+            const files = event.dataTransfer?.files;
+            if (files && Array.from(files).some((f) => f.type.startsWith('image/'))) {
+              event.preventDefault();
+              const pos =
+                view.posAtCoords({ x: event.clientX, y: event.clientY }) ??
+                view.state.selection.main.from;
+              void handleImageFiles(view, files, pos);
+              return true;
+            }
+            return false;
+          },
+          scroll(_event, view) {
+            if (suppressScrollRef.current) return;
+            const scroller = view.scrollDOM;
+            const max = scroller.scrollHeight - scroller.clientHeight;
+            if (max > 0) {
+              callbacksRef.current.onScrollRatio?.(scroller.scrollTop / max);
+            }
+          },
+        }),
         keymap.of([
           {
             key: 'Mod-b',
@@ -218,11 +444,13 @@ export const RawEditor = forwardRef<RawEditorHandle, RawEditorProps>(function Ra
             key: 'Mod-k',
             run: (view) => {
               const sel = view.state.selection.main;
-              const selected = view.state.sliceDoc(sel.from, sel.to) || 'enlace';
-              const insert = `[${selected}](https://)`;
+              const fallbackLinkText = i18nRef.current.toolbar.defaultLinkText;
+              const selected = view.state.sliceDoc(sel.from, sel.to) || fallbackLinkText;
+              const urlTemplate = 'https://';
+              const insert = `[${selected}](${urlTemplate})`;
               view.dispatch({
                 changes: { from: sel.from, to: sel.to, insert },
-                selection: EditorSelection.cursor(sel.from + selected.length + 11),
+                selection: EditorSelection.cursor(sel.from + 1 + selected.length + 2 + urlTemplate.length),
               });
               return true;
             },
@@ -239,36 +467,15 @@ export const RawEditor = forwardRef<RawEditorHandle, RawEditorProps>(function Ra
           ...defaultKeymap,
           ...historyKeymap,
           ...searchKeymap,
+          {
+            key: 'Escape',
+            run: (view) => {
+              if (searchPanelOpen(view.state)) return false;
+              view.contentDOM.blur();
+              return true;
+            },
+          },
         ]),
-        EditorView.domEventHandlers({
-          paste(event) {
-            const files = event.clipboardData?.files;
-            if (files && Array.from(files).some((f) => f.type.startsWith('image/'))) {
-              event.preventDefault();
-              void handleImageFiles(files);
-              return true;
-            }
-            return false;
-          },
-          drop(event, view) {
-            const files = event.dataTransfer?.files;
-            if (files && Array.from(files).some((f) => f.type.startsWith('image/'))) {
-              event.preventDefault();
-              const pos = view.posAtCoords({ x: event.clientX, y: event.clientY }) ?? view.state.selection.main.from;
-              void handleImageFiles(files, pos);
-              return true;
-            }
-            return false;
-          },
-          scroll(_event, view) {
-            if (suppressScrollRef.current) return;
-            const scroller = view.scrollDOM;
-            const max = scroller.scrollHeight - scroller.clientHeight;
-            if (max > 0) {
-              callbacksRef.current.onScrollRatio?.(scroller.scrollTop / max);
-            }
-          },
-        }),
         EditorView.updateListener.of((update) => {
           if (update.selectionSet || update.docChanged) {
             const head = update.state.selection.main.head;
@@ -296,10 +503,20 @@ export const RawEditor = forwardRef<RawEditorHandle, RawEditorProps>(function Ra
     latestMarkdownRef.current = markdownText;
 
     return () => {
+      destroyed = true;
       view.destroy();
       viewRef.current = null;
     };
   }, [docKey]);
+
+  // Dynamically refresh Base64 chip labels via Compartment when UI locale changes
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view) return;
+    view.dispatch({
+      effects: labelsCompartmentRef.current.reconfigure(createBase64LabelsExtension(t.base64)),
+    });
+  }, [t.base64]);
 
   useEffect(() => {
     const view = viewRef.current;
@@ -313,7 +530,7 @@ export const RawEditor = forwardRef<RawEditorHandle, RawEditorProps>(function Ra
     latestMarkdownRef.current = markdownText;
     view.dispatch({
       changes: diff,
-      annotations: ExternalSyncAnnotation.of(true),
+      annotations: [ExternalSyncAnnotation.of(true), Transaction.addToHistory.of(false)],
     });
   }, [markdownText]);
 

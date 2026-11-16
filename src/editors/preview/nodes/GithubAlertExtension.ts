@@ -48,6 +48,7 @@ export const GithubAlertExtension = Node.create({
 
       const dom = document.createElement('div');
       dom.className = 'pm-github-alert';
+      dom.dataset.type = 'github-alert';
 
       const header = document.createElement('div');
       header.className = 'pm-github-alert-header';
@@ -76,6 +77,7 @@ export const GithubAlertExtension = Node.create({
         const { t } = getNodeUiContext();
         dom.dataset.alertType = kind;
         iconSpan.textContent = ALERT_ICONS[kind];
+        select.setAttribute('aria-label', t.toolbar.alert);
         select.value = kind;
         Array.from(select.options).forEach((opt) => {
           const k = opt.value as GithubAlertKind;
@@ -109,6 +111,12 @@ export const GithubAlertExtension = Node.create({
         stopEvent(event) {
           const target = event.target as HTMLElement | null;
           return Boolean(target?.closest('.pm-github-alert-header'));
+        },
+        ignoreMutation(mutation) {
+          if (mutation.type === 'attributes' && mutation.target === contentDOM) {
+            return true;
+          }
+          return !contentDOM.contains(mutation.target as globalThis.Node);
         },
         destroy() {
           unsubscribe();

@@ -6,6 +6,7 @@ dist-pwa/
 dist-extension/
 dist-extension.zip
 dist/
+/test-results/
 
 # Cache & logs
 .vite/

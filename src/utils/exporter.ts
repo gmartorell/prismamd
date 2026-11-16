@@ -2,6 +2,18 @@ import type { JSONContent } from '@tiptap/core';
 import { markdownToProseMirrorDoc } from '../markdown/bridge';
 import { renderLatexHtml } from '../renderers/katexRenderer';
 import { renderMermaidSvg, type ThemeMode } from '../renderers/mermaidRenderer';
+import { isSafeExportUrl, sanitizeMarkdownHtml } from './htmlSanitizer';
+
+export interface ExportHtmlOptions {
+  locale?: string;
+  defaultDocFilename?: string;
+}
+
+const ALLOWED_ALERT_KINDS = new Set(['NOTE', 'TIP', 'IMPORTANT', 'WARNING', 'CAUTION']);
+const ALLOWED_TEXT_ALIGNS = new Set(['left', 'center', 'right', 'justify']);
+
+const EXPORT_CSP_CONTENT =
+  "default-src 'none'; img-src data: https: http: blob:; style-src 'unsafe-inline'; font-src data:;";
 
 function escapeHtml(str: string): string {
   return str
@@ -12,56 +24,100 @@ function escapeHtml(str: string): string {
     .replace(/'/g, '&#39;');
 }
 
+function applyInlineMarks(initialHtml: string, marks: JSONContent['marks']): string {
+  if (!marks || marks.length === 0) return initialHtml;
+  let html = initialHtml;
+
+  for (const mark of marks) {
+    switch (mark.type) {
+      case 'code':
+        html = `<code>${html}</code>`;
+        break;
+      case 'bold':
+        html = `<strong>${html}</strong>`;
+        break;
+      case 'italic':
+        html = `<em>${html}</em>`;
+        break;
+      case 'strike':
+        html = `<del>${html}</del>`;
+        break;
+      case 'link': {
+        const rawHref = String(mark.attrs?.href ?? '');
+        const safeHref = isSafeExportUrl(rawHref, false) ? rawHref.trim() : '#';
+        const href = escapeHtml(safeHref);
+        const title = mark.attrs?.title ? ` title="${escapeHtml(String(mark.attrs.title))}"` : '';
+        html = `<a href="${href}"${title} target="_blank" rel="noopener noreferrer">${html}</a>`;
+        break;
+      }
+      default:
+        break;
+    }
+  }
+
+  return html;
+}
+
+function createUniqueSlotPrefix(nodes: JSONContent[]): string {
+  const combined = nodes
+    .map((n) => `${n.text ?? ''}${String(n.attrs?.value ?? '')}`)
+    .join('');
+  let prefix = 'pmd-trusted-slot-';
+  let salt = 1;
+  while (combined.includes(prefix)) {
+    prefix = `pmd-trusted-slot-${salt++}-`;
+  }
+  return prefix;
+}
+
 async function renderInlineNodes(nodes: JSONContent[] | undefined): Promise<string> {
   if (!nodes || nodes.length === 0) return '';
+  const hasRawInline = nodes.some((n) => n.type === 'rawHtmlInline');
+  const slotPrefix = hasRawInline ? createUniqueSlotPrefix(nodes) : '';
+  const trustedSlots: string[] = [];
   const parts: string[] = [];
 
   for (const node of nodes) {
     if (node.type === 'text') {
-      let html = escapeHtml(node.text ?? '');
-      const marks = node.marks ?? [];
-      for (const mark of marks) {
-        switch (mark.type) {
-          case 'code':
-            html = `<code>${html}</code>`;
-            break;
-          case 'bold':
-            html = `<strong>${html}</strong>`;
-            break;
-          case 'italic':
-            html = `<em>${html}</em>`;
-            break;
-          case 'strike':
-            html = `<del>${html}</del>`;
-            break;
-          case 'link': {
-            const href = escapeHtml(String(mark.attrs?.href ?? ''));
-            const title = mark.attrs?.title ? ` title="${escapeHtml(String(mark.attrs.title))}"` : '';
-            html = `<a href="${href}"${title} target="_blank" rel="noopener noreferrer">${html}</a>`;
-            break;
-          }
-          default:
-            break;
-        }
-      }
+      const html = applyInlineMarks(escapeHtml(node.text ?? ''), node.marks);
       parts.push(html);
     } else if (node.type === 'hardBreak') {
       parts.push('<br />');
     } else if (node.type === 'image') {
-      const src = escapeHtml(String(node.attrs?.src ?? ''));
+      const rawSrc = String(node.attrs?.src ?? '');
       const alt = escapeHtml(String(node.attrs?.alt ?? ''));
       const title = node.attrs?.title ? ` title="${escapeHtml(String(node.attrs.title))}"` : '';
-      parts.push(`<img src="${src}" alt="${alt}"${title} style="max-width:100%;height:auto;border-radius:6px;" />`);
+      const imgHtml = isSafeExportUrl(rawSrc, true)
+        ? `<img src="${escapeHtml(rawSrc.trim())}" alt="${alt}"${title} style="max-width:100%;height:auto;border-radius:6px;" />`
+        : `<img alt="${alt}"${title} style="max-width:100%;height:auto;border-radius:6px;" />`;
+      parts.push(applyInlineMarks(imgHtml, node.marks));
     } else if (node.type === 'mathInline') {
       const latex = String(node.attrs?.latex ?? '');
       const rendered = await renderLatexHtml(latex, false);
-      parts.push(`<span class="math-inline">${rendered.html || `<code>$${escapeHtml(latex)}$</code>`}</span>`);
+      const mathHtml = `<span class="math-inline">${rendered.html || `<code>$${escapeHtml(latex)}$</code>`}</span>`;
+      if (hasRawInline) {
+        const slotIdx = trustedSlots.length;
+        trustedSlots.push(mathHtml);
+        parts.push(applyInlineMarks(`<span class="${slotPrefix}${slotIdx}"></span>`, node.marks));
+      } else {
+        parts.push(applyInlineMarks(mathHtml, node.marks));
+      }
     } else if (node.type === 'rawHtmlInline') {
       parts.push(String(node.attrs?.value ?? ''));
     }
   }
 
-  return parts.join('');
+  const joined = parts.join('');
+  if (!hasRawInline) {
+    return joined;
+  }
+
+  let sanitized = sanitizeMarkdownHtml(joined);
+  for (let i = 0; i < trustedSlots.length; i++) {
+    const marker = `<span class="${slotPrefix}${i}"></span>`;
+    sanitized = sanitized.split(marker).join(trustedSlots[i]);
+  }
+  return sanitized;
 }
 
 async function renderBlockNodes(nodes: JSONContent[] | undefined, theme: ThemeMode): Promise<string> {
@@ -92,7 +148,8 @@ async function renderBlockNodes(nodes: JSONContent[] | undefined, theme: ThemeMo
         break;
       }
       case 'githubAlert': {
-        const kind = String(node.attrs?.alertType ?? 'NOTE').toUpperCase();
+        const rawKind = String(node.attrs?.alertType ?? 'NOTE').toUpperCase();
+        const kind = ALLOWED_ALERT_KINDS.has(rawKind) ? rawKind : 'NOTE';
         const inner = await renderBlockNodes(node.content, theme);
         out.push(
           `<div class="github-alert alert-${kind.toLowerCase()}"><div class="alert-title">${escapeHtml(kind)}</div>${inner}</div>`,
@@ -129,7 +186,8 @@ async function renderBlockNodes(nodes: JSONContent[] | undefined, theme: ThemeMo
         break;
       }
       case 'orderedList': {
-        const start = Number(node.attrs?.start ?? 1);
+        const parsedStart = Number(node.attrs?.start ?? 1);
+        const start = Number.isFinite(parsedStart) ? Math.max(1, Math.trunc(parsedStart)) : 1;
         const items = await Promise.all(
           (node.content ?? []).map(async (li) => `<li>${await renderBlockNodes(li.content, theme)}</li>`),
         );
@@ -153,7 +211,8 @@ async function renderBlockNodes(nodes: JSONContent[] | undefined, theme: ThemeMo
           const cellsHtml: string[] = [];
           for (const cell of row.content ?? []) {
             const tag = cell.type === 'tableHeader' ? 'th' : 'td';
-            const align = cell.attrs?.textAlign ? ` style="text-align:${escapeHtml(String(cell.attrs.textAlign))}"` : '';
+            const rawAlign = String(cell.attrs?.textAlign ?? '').trim().toLowerCase();
+            const align = ALLOWED_TEXT_ALIGNS.has(rawAlign) ? ` style="text-align:${rawAlign}"` : '';
             const inner = await renderBlockNodes(cell.content, theme);
             cellsHtml.push(`<${tag}${align}>${inner}</${tag}>`);
           }
@@ -165,9 +224,13 @@ async function renderBlockNodes(nodes: JSONContent[] | undefined, theme: ThemeMo
       case 'horizontalRule':
         out.push('<hr />');
         break;
-      case 'rawHtmlBlock':
-        out.push(String(node.attrs?.value ?? ''));
+      case 'rawHtmlBlock': {
+        const sanitized = sanitizeMarkdownHtml(String(node.attrs?.value ?? ''));
+        if (sanitized) {
+          out.push(sanitized);
+        }
         break;
+      }
       default:
         break;
     }
@@ -179,6 +242,19 @@ async function renderBlockNodes(nodes: JSONContent[] | undefined, theme: ThemeMo
 export async function renderMarkdownToStaticHtmlBody(markdown: string, theme: ThemeMode): Promise<string> {
   const doc = markdownToProseMirrorDoc(markdown);
   return await renderBlockNodes(doc.content, theme);
+}
+
+export function stripKatexMathml(html: string): string {
+  if (!html.includes('katex-mathml')) return html;
+  if (typeof DOMParser !== 'undefined') {
+    const doc = new DOMParser().parseFromString(
+      `<!DOCTYPE html><html><body>${html}</body></html>`,
+      'text/html',
+    );
+    doc.body.querySelectorAll('.katex-mathml').forEach((el) => el.remove());
+    return doc.body.innerHTML;
+  }
+  return html.replace(/<span\s+class="katex-mathml"[^>]*>[\s\S]*?<\/math><\/span>/gi, '');
 }
 
 export function resolveCssUrls(css: string, baseHref: string): string {
@@ -297,11 +373,12 @@ async function collectKatexStyles(): Promise<string> {
   return parts.join('\n');
 }
 
-function buildStandaloneHtmlDocument(
+export function buildStandaloneHtmlDocument(
   title: string,
   bodyHtml: string,
   theme: ThemeMode,
-  katexCss: string,
+  katexCss = '',
+  options?: ExportHtmlOptions,
 ): string {
   const isDark = theme === 'dark';
   const isSepia = theme === 'sepia';
@@ -310,12 +387,19 @@ function buildStandaloneHtmlDocument(
   const border = isDark ? '#30363d' : isSepia ? '#dccbb0' : '#d0d7de';
   const codeBg = isDark ? '#161b22' : isSepia ? '#efe6d5' : '#f6f8fa';
 
+  const rawLocale = options?.locale?.trim() || 'es';
+  const safeLang = /^[a-zA-Z]{2,3}(?:-[a-zA-Z0-9]{2,8})*$/.test(rawLocale) ? rawLocale : 'es';
+  const defaultFilename = options?.defaultDocFilename?.trim() || 'documento';
+  const effectiveTitle = title.trim() || defaultFilename;
+  const safeKatexCss = katexCss.replace(/<\/style/gi, '<\\/style');
+
   return `<!DOCTYPE html>
-<html lang="es">
+<html lang="${escapeHtml(safeLang)}">
 <head>
 <meta charset="utf-8" />
+<meta http-equiv="Content-Security-Policy" content="${EXPORT_CSP_CONTENT}" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>${escapeHtml(title)}</title>
+<title>${escapeHtml(effectiveTitle)}</title>
 <style>
   :root { color-scheme: ${isDark ? 'dark' : 'light'}; }
   body {
@@ -348,13 +432,22 @@ function buildStandaloneHtmlDocument(
   .alert-warning { border-left-color: #f59e0b; }
   .alert-caution { border-left-color: #ef4444; }
   .mermaid-export { margin: 1.2em 0; text-align: center; }
+  .mermaid-export svg { max-width: 100%; height: auto; }
   .math-block { margin: 1.2em 0; text-align: center; overflow-x: auto; }
   @media print {
     body { background: #fff !important; color: #111 !important; padding: 0; }
+    h1, h2, td, blockquote { border-color: #d0d7de !important; }
+    pre, code, th, .github-alert { background: #f6f8fa !important; color: #111 !important; border-color: #d0d7de !important; }
+    pre code { background: transparent !important; }
+    .alert-tip { border-left-color: #10b981 !important; }
+    .alert-important { border-left-color: #8b5cf6 !important; }
+    .alert-warning { border-left-color: #f59e0b !important; }
+    .alert-caution { border-left-color: #ef4444 !important; }
     pre, table, .mermaid-export, .github-alert, .math-block { break-inside: avoid; }
+    .mermaid-export svg { max-width: 100%; height: auto; }
     .math-block { overflow: visible; }
   }
-  ${katexCss}
+  ${safeKatexCss}
 </style>
 </head>
 <body>
@@ -367,14 +460,16 @@ export async function exportStandaloneHtml(
   title: string,
   markdown: string,
   theme: ThemeMode,
+  options?: ExportHtmlOptions,
 ): Promise<void> {
   const body = await renderMarkdownToStaticHtmlBody(markdown, theme);
-  const katexCss = await collectKatexStyles();
-  const fullHtml = buildStandaloneHtmlDocument(title, body, theme, katexCss);
+  const katexCss = body.includes('class="katex"') ? await collectKatexStyles() : '';
+  const fullHtml = buildStandaloneHtmlDocument(title, body, theme, katexCss, options);
   const blob = new Blob([fullHtml], { type: 'text/html;charset=utf-8' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
-  const cleanName = title.replace(/\.(md|markdown|mdx|mdown)$/i, '') || 'documento';
+  const defaultFilename = options?.defaultDocFilename?.trim() || 'documento';
+  const cleanName = title.replace(/\.(md|markdown|mdx|mdown)$/i, '').trim() || defaultFilename;
   a.href = url;
   a.download = `${cleanName}.html`;
   document.body.appendChild(a);
@@ -418,10 +513,11 @@ export async function exportPrintPdf(
   title: string,
   markdown: string,
   theme: ThemeMode,
+  options?: ExportHtmlOptions,
 ): Promise<void> {
   const body = await renderMarkdownToStaticHtmlBody(markdown, theme === 'dark' ? 'light' : theme);
-  const katexCss = await collectKatexStyles();
-  const fullHtml = buildStandaloneHtmlDocument(title, body, 'light', katexCss);
+  const katexCss = body.includes('class="katex"') ? await collectKatexStyles() : '';
+  const fullHtml = buildStandaloneHtmlDocument(title, body, 'light', katexCss, options);
   const iframe = document.createElement('iframe');
   iframe.style.position = 'fixed';
   iframe.style.left = '-9999px';
@@ -455,7 +551,9 @@ export async function exportPrintPdf(
 }
 
 export async function copyAsRichText(markdown: string, theme: ThemeMode): Promise<void> {
-  const html = await renderMarkdownToStaticHtmlBody(markdown, theme);
+  const effectiveTheme: ThemeMode = theme === 'dark' ? 'light' : theme;
+  const rawHtml = await renderMarkdownToStaticHtmlBody(markdown, effectiveTheme);
+  const html = stripKatexMathml(rawHtml);
   if (typeof ClipboardItem !== 'undefined' && navigator.clipboard?.write) {
     const item = new ClipboardItem({
       'text/html': new Blob([html], { type: 'text/html' }),

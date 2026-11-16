@@ -5,7 +5,26 @@ import { chromium } from 'playwright-core';
 
 const root = process.cwd();
 const distPwa = path.join(root, 'dist-pwa');
-const artifactDir = '/home/odoo/.gemini/antigravity/brain/39d0d7ef-3c3f-4642-8260-5a80965d19a9';
+const artifactDir = process.env.E2E_ARTIFACT_DIR || path.join(root, 'test-results');
+fs.mkdirSync(artifactDir, { recursive: true });
+
+function resolveChromeExecutable() {
+  const candidates = [
+    process.env.CHROME_BIN,
+    '/usr/bin/google-chrome',
+    '/usr/bin/google-chrome-stable',
+    '/usr/bin/chromium',
+    '/usr/bin/chromium-browser',
+  ].filter(Boolean);
+
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) return candidate;
+  }
+
+  const pwPath = chromium.executablePath?.();
+  if (pwPath && fs.existsSync(pwPath)) return pwPath;
+  return undefined;
+}
 
 const MIME_TYPES = {
   '.html': 'text/html; charset=utf-8',
@@ -21,12 +40,17 @@ const MIME_TYPES = {
 };
 
 function startStaticServer(dir) {
+  const resolvedDir = path.resolve(dir);
   return new Promise((resolve) => {
     const server = http.createServer((req, res) => {
       const reqPath = (req.url || '/').split('?')[0];
       const rel = reqPath === '/' ? 'index.html' : reqPath.replace(/^\/+/, '');
-      const fullPath = path.join(dir, rel);
-      if (!fullPath.startsWith(dir) || !fs.existsSync(fullPath) || fs.statSync(fullPath).isDirectory()) {
+      const fullPath = path.resolve(resolvedDir, rel);
+      if (
+        (fullPath !== resolvedDir && !fullPath.startsWith(`${resolvedDir}${path.sep}`)) ||
+        !fs.existsSync(fullPath) ||
+        fs.statSync(fullPath).isDirectory()
+      ) {
         res.statusCode = 404;
         res.end('Not found');
         return;
@@ -52,8 +76,9 @@ async function run() {
   const { server, port } = await startStaticServer(distPwa);
   const url = `http://127.0.0.1:${port}/`;
 
+  const executablePath = resolveChromeExecutable();
   const browser = await chromium.launch({
-    executablePath: '/usr/bin/google-chrome',
+    ...(executablePath ? { executablePath } : {}),
     headless: true,
     args: ['--no-sandbox', '--disable-dev-shm-usage'],
   });
@@ -137,8 +162,10 @@ async function run() {
     await page.locator('[data-testid="view-split"]').click();
     await page.waitForSelector('.raw-editor-host .cm-content');
 
-    // Use real PNG icon from dist-extension/icons/icon-48.png (>200 chars Base64)
-    const iconPath = path.join(root, 'dist-extension', 'icons', 'icon-48.png');
+    // Use real PNG icon from dist-extension/icons/icon-48.png or dist-pwa/icons/icon-192.png (>200 chars Base64)
+    const extIconPath = path.join(root, 'dist-extension', 'icons', 'icon-48.png');
+    const pwaIconPath = path.join(root, 'dist-pwa', 'icons', 'icon-192.png');
+    const iconPath = fs.existsSync(extIconPath) ? extIconPath : pwaIconPath;
     const pngBase64 = fs.readFileSync(iconPath).toString('base64');
     assert(pngBase64.length > 200, 'Sample PNG base64 must exceed 120-char folding threshold');
 

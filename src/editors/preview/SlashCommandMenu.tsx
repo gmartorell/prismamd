@@ -43,6 +43,8 @@ interface SlashCommandMenuProps {
   keyHandlerRef: { current: ((event: KeyboardEvent) => boolean) | null };
 }
 
+const SLASH_MENU_HEIGHT = 296;
+
 export function SlashCommandMenu({
   editor,
   containerRef,
@@ -53,6 +55,7 @@ export function SlashCommandMenu({
   const [slash, setSlash] = useState<SlashState | null>(null);
   const [selectedIndex, setSelectedIndex] = useState(0);
   const listRef = useRef<HTMLDivElement | null>(null);
+  const dismissedRangeFromRef = useRef<number | null>(null);
 
   const items = useMemo<SlashItem[]>(
     () => [
@@ -118,7 +121,7 @@ export function SlashCommandMenu({
         desc: t.slash.items.codeBlock.desc,
         keywords: ['code', 'codigo', 'pre', 'snippet'],
         icon: <FileCode size={15} />,
-        run: (ed) => ed.chain().focus().toggleCodeBlock().run(),
+        run: (ed) => ed.chain().focus().toggleCodeBlock({ language: '' }).run(),
       },
       {
         id: 'mermaid',
@@ -132,7 +135,7 @@ export function SlashCommandMenu({
             .focus()
             .insertContent({
               type: 'mermaidBlock',
-              attrs: { code: 'flowchart LR\n  A[Inicio] --> B[Proceso]\n  B --> C[Fin]' },
+              attrs: { code: 'flowchart LR\n  A[Start] --> B[End]' },
             })
             .run(),
       },
@@ -241,6 +244,7 @@ export function SlashCommandMenu({
 
   const executeItem = (item: SlashItem) => {
     if (!editor || !slash) return;
+    dismissedRangeFromRef.current = null;
     editor.chain().focus().deleteRange({ from: slash.rangeFrom, to: slash.rangeTo }).run();
     item.run(editor, onRequestImage);
     setSlash(null);
@@ -251,18 +255,32 @@ export function SlashCommandMenu({
   }, [slash?.query]);
 
   useEffect(() => {
+    if (!slash || !listRef.current) return;
+    const activeEl = listRef.current.querySelector<HTMLElement>('.slash-menu-item.selected');
+    activeEl?.scrollIntoView?.({ block: 'nearest' });
+  }, [selectedIndex, slash]);
+
+  useEffect(() => {
     if (!editor) return;
+
+    const scroller = containerRef.current?.querySelector('.preview-editor-scroller') as HTMLElement | null;
+
+    const closeSlash = () => {
+      setSlash(null);
+    };
 
     const evaluateSlash = () => {
       if (editor.isDestroyed) return;
       const { selection } = editor.state;
       if (!selection.empty || editor.isActive('codeBlock')) {
+        dismissedRangeFromRef.current = null;
         setSlash(null);
         return;
       }
 
       const { $from } = selection;
       if ($from.parent.type.name !== 'paragraph') {
+        dismissedRangeFromRef.current = null;
         setSlash(null);
         return;
       }
@@ -270,6 +288,7 @@ export function SlashCommandMenu({
       const textBefore = $from.parent.textBetween(0, $from.parentOffset, '\0', '\0');
       const match = textBefore.match(/(?:^|\s)\/([^\s/]*)$/);
       if (!match) {
+        dismissedRangeFromRef.current = null;
         setSlash(null);
         return;
       }
@@ -281,14 +300,32 @@ export function SlashCommandMenu({
       const rangeFrom = blockStartPos + slashStartOffset;
       const rangeTo = selection.from;
 
+      if (dismissedRangeFromRef.current === rangeFrom) {
+        return;
+      }
+      dismissedRangeFromRef.current = null;
+
       const container = containerRef.current;
       if (!container) return;
 
       try {
         const coords = editor.view.coordsAtPos(rangeTo);
         const containerRect = container.getBoundingClientRect();
-        const top = Math.min(containerRect.height - 220, Math.max(12, coords.bottom - containerRect.top + 6));
-        const left = Math.max(12, Math.min(containerRect.width - 280, coords.left - containerRect.left));
+        const belowTop = coords.bottom - containerRect.top + 6;
+        const aboveTop = coords.top - containerRect.top - SLASH_MENU_HEIGHT - 6;
+        const top =
+          containerRect.height > 0 &&
+          belowTop + SLASH_MENU_HEIGHT > containerRect.height &&
+          aboveTop >= 8
+            ? aboveTop
+            : containerRect.height > 0
+              ? Math.max(8, Math.min(containerRect.height - SLASH_MENU_HEIGHT, belowTop))
+              : Math.max(8, belowTop);
+        const left =
+          containerRect.width > 0
+            ? Math.max(8, Math.min(Math.max(8, containerRect.width - 280), coords.left - containerRect.left))
+            : Math.max(8, coords.left - containerRect.left);
+
         setSlash({
           query: match[1] ?? '',
           rangeFrom,
@@ -303,9 +340,13 @@ export function SlashCommandMenu({
 
     editor.on('selectionUpdate', evaluateSlash);
     editor.on('update', evaluateSlash);
+    editor.on('blur', closeSlash);
+    scroller?.addEventListener('scroll', closeSlash, { passive: true });
     return () => {
       editor.off('selectionUpdate', evaluateSlash);
       editor.off('update', evaluateSlash);
+      editor.off('blur', closeSlash);
+      scroller?.removeEventListener('scroll', closeSlash);
     };
   }, [editor, containerRef]);
 
@@ -318,6 +359,8 @@ export function SlashCommandMenu({
     keyHandlerRef.current = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
         event.preventDefault();
+        event.stopPropagation();
+        dismissedRangeFromRef.current = slash.rangeFrom;
         setSlash(null);
         return true;
       }

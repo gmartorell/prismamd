@@ -8,7 +8,7 @@ import {
   RefreshCw,
   X,
 } from 'lucide-preact';
-import { useEffect, useMemo, useState } from 'preact/hooks';
+import { useCallback, useEffect, useMemo, useState } from 'preact/hooks';
 import { useI18n } from '../i18n';
 import type { FolderEntry } from '../workspace/fileSystem';
 
@@ -25,37 +25,30 @@ interface FolderSidebarProps {
   onCloseFolder: () => void;
   onExpandDirectory: (entry: FolderEntry) => Promise<void>;
   onSelectFile: (entry: FolderEntry) => void;
-  onCreateFile: (filename: string) => Promise<void>;
+  onCreateFile: (filename: string) => Promise<boolean | void>;
 }
 
 function TreeNode({
   entry,
   depth,
   forceExpanded,
+  expandedPaths,
   activeRelativePath,
-  onExpandDirectory,
+  onToggleDirectory,
   onSelectFile,
 }: {
   entry: FolderEntry;
   depth: number;
   forceExpanded: boolean;
+  expandedPaths: ReadonlySet<string>;
   activeRelativePath?: string;
-  onExpandDirectory: (entry: FolderEntry) => Promise<void>;
+  onToggleDirectory: (entry: FolderEntry) => void;
   onSelectFile: (entry: FolderEntry) => void;
 }) {
   const { t } = useI18n();
-  const [expanded, setExpanded] = useState(false);
-  const isOpen = forceExpanded || expanded;
+  const isOpen = forceExpanded || expandedPaths.has(entry.path);
 
   if (entry.kind === 'directory') {
-    const toggleDir = () => {
-      const next = !expanded;
-      setExpanded(next);
-      if (next && !entry.loaded && !entry.loading) {
-        void onExpandDirectory(entry);
-      }
-    };
-
     const children = entry.children ?? [];
 
     return (
@@ -63,8 +56,9 @@ function TreeNode({
         <button
           type="button"
           className="tree-row tree-dir"
+          aria-expanded={isOpen}
           style={{ paddingLeft: `${10 + depth * 12}px` }}
-          onClick={toggleDir}
+          onClick={() => onToggleDirectory(entry)}
         >
           {isOpen ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
           <Folder size={13} />
@@ -88,8 +82,9 @@ function TreeNode({
                   entry={child}
                   depth={depth + 1}
                   forceExpanded={forceExpanded}
+                  expandedPaths={expandedPaths}
                   activeRelativePath={activeRelativePath}
-                  onExpandDirectory={onExpandDirectory}
+                  onToggleDirectory={onToggleDirectory}
                   onSelectFile={onSelectFile}
                 />
               ))
@@ -113,6 +108,23 @@ function TreeNode({
       <span className="tree-name">{entry.name}</span>
     </button>
   );
+}
+
+function collectUnloadedExpandedDirectories(
+  list: FolderEntry[],
+  expandedPaths: ReadonlySet<string>,
+  out: FolderEntry[] = [],
+): FolderEntry[] {
+  for (const entry of list) {
+    if (entry.kind !== 'directory') continue;
+    if (!expandedPaths.has(entry.path)) continue;
+    if (!entry.loaded && !entry.loading) {
+      out.push(entry);
+    } else if (entry.children && entry.children.length > 0) {
+      collectUnloadedExpandedDirectories(entry.children, expandedPaths, out);
+    }
+  }
+  return out;
 }
 
 function filterTree(entries: FolderEntry[], query: string): FolderEntry[] {
@@ -153,25 +165,64 @@ export function FolderSidebar({
   const [filter, setFilter] = useState('');
   const [creating, setCreating] = useState(false);
   const [newName, setNewName] = useState('');
+  const [submittingCreate, setSubmittingCreate] = useState(false);
+  const [expandedPaths, setExpandedPaths] = useState<Set<string>>(() => new Set());
 
   useEffect(() => {
     setFilter('');
     setCreating(false);
     setNewName('');
+    setExpandedPaths(new Set());
   }, [rootName]);
+
+  useEffect(() => {
+    if (expandedPaths.size === 0 || entries.length === 0) return;
+    const toLoad = collectUnloadedExpandedDirectories(entries, expandedPaths);
+    for (const dirEntry of toLoad) {
+      void onExpandDirectory(dirEntry);
+    }
+  }, [entries, expandedPaths, onExpandDirectory]);
+
+  const handleToggleDirectory = useCallback(
+    (entry: FolderEntry) => {
+      setExpandedPaths((prev) => {
+        const next = new Set(prev);
+        if (next.has(entry.path)) {
+          next.delete(entry.path);
+        } else {
+          next.add(entry.path);
+        }
+        return next;
+      });
+      if (!entry.loaded && !entry.loading && filter.trim().length > 0) {
+        void onExpandDirectory(entry);
+      }
+    },
+    [filter, onExpandDirectory],
+  );
 
   const trimmedFilter = filter.trim();
   const visibleEntries = useMemo(() => filterTree(entries, trimmedFilter), [entries, trimmedFilter]);
 
   const submitCreate = async () => {
+    if (submittingCreate) return;
     const trimmed = newName.trim();
     if (!trimmed) {
       setCreating(false);
       return;
     }
-    await onCreateFile(trimmed);
-    setNewName('');
-    setCreating(false);
+    setSubmittingCreate(true);
+    try {
+      const ok = await onCreateFile(trimmed);
+      if (ok !== false) {
+        setNewName('');
+        setCreating(false);
+      }
+    } catch {
+      // Keep input open so user can adjust the filename; AppShell shows the localized toast
+    } finally {
+      setSubmittingCreate(false);
+    }
   };
 
   return (
@@ -183,7 +234,7 @@ export function FolderSidebar({
           </span>
           {rootName && readOnly && (
             <span className="folder-ro-badge" title={t.files.readOnlyFolder}>
-              RO
+              {t.files.readOnlyBadge}
             </span>
           )}
         </div>
@@ -264,12 +315,19 @@ export function FolderSidebar({
                 type="text"
                 className="sidebar-input"
                 autoFocus
+                disabled={submittingCreate}
                 value={newName}
                 placeholder={t.files.newFilePlaceholder}
                 onInput={(e) => setNewName((e.currentTarget as HTMLInputElement).value)}
                 onKeyDown={(e) => {
-                  if (e.key === 'Enter') void submitCreate();
-                  else if (e.key === 'Escape') setCreating(false);
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    void submitCreate();
+                  } else if (e.key === 'Escape') {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    setCreating(false);
+                  }
                 }}
               />
             </div>
@@ -287,8 +345,9 @@ export function FolderSidebar({
                   entry={entry}
                   depth={0}
                   forceExpanded={trimmedFilter.length > 0}
+                  expandedPaths={expandedPaths}
                   activeRelativePath={activeRelativePath}
-                  onExpandDirectory={onExpandDirectory}
+                  onToggleDirectory={handleToggleDirectory}
                   onSelectFile={onSelectFile}
                 />
               ))

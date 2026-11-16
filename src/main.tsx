@@ -18,7 +18,19 @@ if (
 
   if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => {
-      navigator.serviceWorker.register('./sw.js').catch(() => undefined);
+      navigator.serviceWorker
+        .register('./sw.js')
+        .then(() => navigator.serviceWorker.ready)
+        .then((reg) => {
+          const scheduleIdle =
+            typeof window.requestIdleCallback === 'function'
+              ? (cb: () => void) => window.requestIdleCallback(cb, { timeout: 4000 })
+              : (cb: () => void) => window.setTimeout(cb, 1500);
+          scheduleIdle(() => {
+            reg.active?.postMessage({ type: 'WARM_LAZY_ASSETS' });
+          });
+        })
+        .catch(() => undefined);
     });
   }
 }

@@ -1,23 +1,80 @@
 const CACHE_NAME = 'prismamd-2026.11.16.2';
-const PRECACHE_ASSETS = /*__PRECACHE_ASSETS__*/ [];
+const CORE_PRECACHE_ASSETS = /*__CORE_PRECACHE_ASSETS__*/ [];
+const LAZY_WARM_ASSETS = /*__LAZY_WARM_ASSETS__*/ [];
+
+let warmingPromise = null;
+
+async function warmLazyAssets() {
+  if (!Array.isArray(LAZY_WARM_ASSETS) || LAZY_WARM_ASSETS.length === 0) return;
+  const cache = await caches.open(CACHE_NAME);
+  const concurrency = 4;
+  let index = 0;
+
+  async function worker() {
+    while (index < LAZY_WARM_ASSETS.length) {
+      const assetUrl = LAZY_WARM_ASSETS[index];
+      index += 1;
+      try {
+        const existing = await cache.match(assetUrl, { ignoreSearch: true });
+        if (!existing) {
+          const response = await fetch(assetUrl);
+          if (response && response.status === 200) {
+            await cache.put(assetUrl, response);
+          }
+        }
+      } catch {
+        // Ignore transient offline/network failures while warming optional lazy assets
+      }
+    }
+  }
+
+  await Promise.all(
+    Array.from({ length: Math.min(concurrency, LAZY_WARM_ASSETS.length) }, () => worker()),
+  );
+}
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => cache.addAll(PRECACHE_ASSETS)).then(() => self.skipWaiting()),
+    caches
+      .open(CACHE_NAME)
+      .then((cache) => cache.addAll(CORE_PRECACHE_ASSETS))
+      .then(() => {
+        if (!self.registration.active) {
+          return self.skipWaiting();
+        }
+        return undefined;
+      }),
   );
 });
 
 self.addEventListener('activate', (event) => {
   event.waitUntil(
-    caches.keys().then((keys) =>
-      Promise.all(keys.filter((key) => key !== CACHE_NAME).map((key) => caches.delete(key))),
-    ).then(() => self.clients.claim()),
+    caches
+      .keys()
+      .then((keys) =>
+        Promise.all(keys.filter((key) => key !== CACHE_NAME).map((key) => caches.delete(key))),
+      )
+      .then(() => self.clients.claim()),
   );
 });
 
 self.addEventListener('message', (event) => {
-  if (event.data && event.data.type === 'SKIP_WAITING') {
+  if (!event.data || typeof event.data !== 'object') return;
+
+  if (event.data.type === 'SKIP_WAITING') {
     self.skipWaiting();
+    return;
+  }
+
+  if (event.data.type === 'WARM_LAZY_ASSETS') {
+    if (!warmingPromise) {
+      warmingPromise = warmLazyAssets().finally(() => {
+        warmingPromise = null;
+      });
+    }
+    if (typeof event.waitUntil === 'function') {
+      event.waitUntil(warmingPromise);
+    }
   }
 });
 
@@ -38,9 +95,10 @@ self.addEventListener('fetch', (event) => {
           return response;
         })
         .catch(async () => {
-          const cachedNav = await caches.match(event.request, { ignoreSearch: true });
+          const cache = await caches.open(CACHE_NAME);
+          const cachedNav = await cache.match(event.request, { ignoreSearch: true });
           if (cachedNav) return cachedNav;
-          const fallback = await caches.match('./index.html');
+          const fallback = await cache.match('./index.html');
           return fallback || Response.error();
         }),
     );
@@ -48,23 +106,18 @@ self.addEventListener('fetch', (event) => {
   }
 
   event.respondWith(
-    caches.match(event.request, { ignoreSearch: true }).then((cached) => {
+    caches.open(CACHE_NAME).then(async (cache) => {
+      const cached = await cache.match(event.request, { ignoreSearch: true });
       if (cached) return cached;
-      return fetch(event.request)
-        .then((response) => {
-          if (response && response.status === 200) {
-            const clone = response.clone();
-            caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
-          }
-          return response;
-        })
-        .catch(async () => {
-          if (event.request.mode === 'navigate') {
-            const fallback = await caches.match('./index.html');
-            if (fallback) return fallback;
-          }
-          return Response.error();
-        });
+      try {
+        const response = await fetch(event.request);
+        if (response && response.status === 200) {
+          cache.put(event.request, response.clone());
+        }
+        return response;
+      } catch {
+        return Response.error();
+      }
     }),
   );
 });

@@ -1,22 +1,40 @@
 import { Node, mergeAttributes } from '@tiptap/core';
 import type { Node as PMNode } from '@tiptap/pm/model';
 import { render } from 'preact';
-import { useEffect, useState } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
 import { renderMermaidSvg } from '../../../renderers/mermaidRenderer';
 import { useNodeUiContext } from '../nodeUiContext';
 
 interface MermaidCardProps {
   code: string;
   onChange: (nextCode: string) => void;
+  onRefocusEditor?: () => void;
 }
 
-function MermaidCard({ code, onChange }: MermaidCardProps) {
+function MermaidCard({ code, onChange, onRefocusEditor }: MermaidCardProps) {
   const { theme, t } = useNodeUiContext();
   const [editing, setEditing] = useState(false);
   const [svg, setSvg] = useState('');
   const [error, setError] = useState<string | undefined>(undefined);
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const isInitialRenderRef = useRef(true);
+  const prevCodeRef = useRef(code);
 
   useEffect(() => {
+    const trimmed = code.trim();
+    if (!trimmed) {
+      prevCodeRef.current = code;
+      isInitialRenderRef.current = false;
+      setSvg('');
+      setError(undefined);
+      return;
+    }
+
+    const codeChanged = prevCodeRef.current !== code;
+    prevCodeRef.current = code;
+    const delay = isInitialRenderRef.current ? 0 : codeChanged ? 180 : 0;
+    isInitialRenderRef.current = false;
+
     let active = true;
     const timer = window.setTimeout(async () => {
       const res = await renderMermaidSvg(code, theme);
@@ -27,13 +45,19 @@ function MermaidCard({ code, onChange }: MermaidCardProps) {
         setError(undefined);
         setSvg(res.svg);
       }
-    }, editing ? 180 : 0);
+    }, delay);
 
     return () => {
       active = false;
       window.clearTimeout(timer);
     };
-  }, [code, theme, editing]);
+  }, [code, theme]);
+
+  useEffect(() => {
+    if (editing) {
+      textareaRef.current?.focus();
+    }
+  }, [editing]);
 
   return (
     <div className="pm-mermaid-card pm-interactive" contentEditable={false}>
@@ -45,7 +69,14 @@ function MermaidCard({ code, onChange }: MermaidCardProps) {
         <button
           type="button"
           className="pm-mini-btn"
-          onClick={() => setEditing((v) => !v)}
+          onClick={() => {
+            if (editing) {
+              setEditing(false);
+              onRefocusEditor?.();
+            } else {
+              setEditing(true);
+            }
+          }}
         >
           {editing ? t.blocks.preview : t.blocks.editCode}
         </button>
@@ -53,16 +84,30 @@ function MermaidCard({ code, onChange }: MermaidCardProps) {
 
       {editing && (
         <textarea
+          ref={(el) => {
+            textareaRef.current = el;
+          }}
           className="pm-code-textarea"
           value={code}
           rows={Math.max(4, Math.min(16, code.split('\n').length + 1))}
           onInput={(e) => onChange((e.currentTarget as HTMLTextAreaElement).value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Escape') {
+              e.preventDefault();
+              e.stopPropagation();
+              setEditing(false);
+              onRefocusEditor?.();
+            }
+          }}
         />
       )}
 
       <div
         className="pm-mermaid-preview"
-        onClick={() => {
+        onClick={(e) => {
+          if ((e.target as HTMLElement | null)?.closest('a')) {
+            e.preventDefault();
+          }
           if (!editing) setEditing(true);
         }}
         title={!editing ? t.blocks.editCode : undefined}
@@ -99,8 +144,16 @@ export const MermaidExtension = Node.create({
     return [{ tag: 'div[data-type="mermaid-block"]' }];
   },
 
-  renderHTML({ HTMLAttributes }) {
-    return ['div', mergeAttributes(HTMLAttributes, { 'data-type': 'mermaid-block' })];
+  renderHTML({ node, HTMLAttributes }) {
+    return [
+      'div',
+      mergeAttributes(HTMLAttributes, { 'data-type': 'mermaid-block' }),
+      String(node.attrs.code ?? ''),
+    ];
+  },
+
+  renderText({ node }) {
+    return `\`\`\`mermaid\n${String(node.attrs.code ?? '')}\n\`\`\``;
   },
 
   addNodeView() {
@@ -120,10 +173,20 @@ export const MermaidExtension = Node.create({
         );
       };
 
+      const refocusEditor = () => {
+        if (!editor.isDestroyed) {
+          editor.commands.focus();
+        }
+      };
+
       const mount = (pmNode: PMNode) => {
         currentNode = pmNode;
         render(
-          <MermaidCard code={String(pmNode.attrs.code ?? '')} onChange={updateCode} />,
+          <MermaidCard
+            code={String(pmNode.attrs.code ?? '')}
+            onChange={updateCode}
+            onRefocusEditor={refocusEditor}
+          />,
           dom,
         );
       };

@@ -1,5 +1,5 @@
 import { CheckCircle2, RefreshCw, Sparkles, WifiOff, X } from 'lucide-preact';
-import { useEffect } from 'preact/hooks';
+import { useEffect, useRef } from 'preact/hooks';
 import { formatMessage, useI18n } from '../i18n';
 import type { RuntimeChannel, UpdateCheckResult } from '../utils/version';
 
@@ -21,17 +21,23 @@ export function VersionModal({
   onClose,
 }: VersionModalProps) {
   const { t } = useI18n();
+  const closeBtnRef = useRef<HTMLButtonElement | null>(null);
 
   useEffect(() => {
     if (!open) return;
+    const focusTimer = window.setTimeout(() => closeBtnRef.current?.focus(), 10);
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         e.preventDefault();
+        e.stopPropagation();
         onClose();
       }
     };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
+    window.addEventListener('keydown', onKey, true);
+    return () => {
+      window.clearTimeout(focusTimer);
+      window.removeEventListener('keydown', onKey, true);
+    };
   }, [open, onClose]);
 
   if (!open) return null;
@@ -42,14 +48,16 @@ export function VersionModal({
   return (
     <div
       className="version-modal-backdrop"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="prismamd-version-title"
       onClick={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
     >
-      <div className="version-modal">
+      <div
+        className="version-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="prismamd-version-title"
+      >
         <div className="version-modal-header">
           <div className="version-modal-title-wrap">
             <span className="brand-mark">◆</span>
@@ -58,6 +66,7 @@ export function VersionModal({
             </h2>
           </div>
           <button
+            ref={closeBtnRef}
             type="button"
             className="tab-close-btn"
             onClick={onClose}

@@ -8,6 +8,26 @@ El formato está basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1
 
 ## [Unreleased]
 
+### Añadido
+- Sanitizador HTML offline basado en `DOMParser` (`src/utils/htmlSanitizer.ts`) con lista blanca de etiquetas y esquemas URL seguros (`http(s):`, `mailto:`, `#`, rutas relativas y `data:image/*;base64,...`), más política CSP estricta (`default-src 'none'`) en documentos HTML exportados e impresión PDF.
+- Cabecera interactiva en bloques de código de **Vista Previa** (`PreviewEditor.tsx`, `app.css`) con selector de lenguaje (`lowlight`), botón de copiado rápido y resaltado sintáctico `.hljs-*` adaptado a los temas **Claro**, **Oscuro** y **Sepia**.
+- Divisor arrastrable y accesible por teclado (`.split-divider` con rango `20%–80%`, restablecimiento con doble clic y persistencia local) en modo **Pantalla Dividida**.
+- Detección de conflictos externos en disco al estilo VS Code (`fileSystem.ts`, `AppShell.tsx`): recarga silenciosa si la pestaña está limpia y diálogo modal de resolución (*Recargar desde disco*, *Sobrescribir disco*, *Guardar como copia…*) cuando existen cambios locales sin guardar, además de respaldo automático a *Guardar como…* en archivos de solo lectura del sistema operativo.
+- Soporte de apertura de carpetas en navegadores no Chromium (Firefox/Safari) mediante respaldo `<input webkitdirectory>` en modo solo lectura y preservación de subcarpetas expandidas al refrescar el explorador lateral.
+- Sincronización en tiempo real de pestañas entre contextos abiertos (Pestaña completa ↔ Side Panel) mediante `BroadcastChannel` y aislamiento independiente de disposición visual del Side Panel.
+
+### Cambiado
+- Reasignado el atajo de teclado de **Modo Zen** de `Ctrl+Shift+Z` a **`Alt+Z`** para no colisionar con *Rehacer* (`Redo`), y añadidos atajos globales `Ctrl+P` / `Cmd+P` (exportar/imprimir PDF) y `Ctrl+F` / `Cmd+F` desde **Vista Previa**.
+- Guardar la **Nota rápida** (*Scratchpad*) en disco ahora promueve el contenido a una nueva pestaña de archivo dedicada y restablece la Nota rápida limpia sin vincularla nunca a un `FileSystemFileHandle`.
+- Arquitectura de caché PWA en dos niveles (`finalize-pwa.mjs`, `pwa/sw.js`, `main.tsx`, `vite.config.ts`): precarga inicial reducida exclusivamente al *app shell* esencial con `buildHash` determinista, precarga diferida en segundo plano (`WARM_LAZY_ASSETS`) de chunks perezosos de Mermaid/KaTeX divididos por motor y eliminación de fuentes `.woff`/`.ttf` redundantes.
+- Refinada la accesibilidad (`role="dialog"`, navegación por teclado en `TabBar`, `CommandPalette`, `SlashCommandMenu`, chips Base64 y cierre con `Escape`), sincronización dinámica de `<html lang>` / `<meta name="theme-color">` (`App.tsx`) y cobertura completa i18n ES/EN sin cadenas fijas en código.
+
+### Corregido
+- Protección contra sobrescritura accidental al crear archivos en carpetas (`createFileInFolder` verifica `{ create: false }` y valida nombres inválidos o dotfiles), cola serializada de escrituras en IndexedDB, guardia de hidratación inicial y volcado seguro en `pagehide`/`visibilitychange`/`beforeunload`.
+- Pérdida de datos y bordes en el puente AST (`bridge.ts`): preservación sin pérdidas de enlaces/imágenes por referencia (`[id]: url`), notas al pie GFM (`[^1]`), agrupación de marcas inline compartidas sin entidades `&#x20;`, metadatos de bloques de código, listas numeradas de tareas, celdas de tabla multipárrafo (`<br>`), tuberías `|` en fórmulas dentro de tablas, alineación por columna completa y guardia frente a importes monetarios (`$10 and $20`).
+- Edición de fórmulas `mathInline` vacías en **Vista Previa** (`MathExtensions.tsx`, eliminando el nodo vacío en lugar de emitir `$$`), copiado `Ctrl+C` (`renderText`) en nodos técnicos, bloqueo de inyección de atributos HTML externos al pegar (`RawHtmlExtensions.tsx`), barra flotante de tablas en superposición sin salto de layout y `ignoreMutation` en alertas GitHub.
+- Plegado incremental de imágenes Base64 por línea (`StateField` en `base64FoldExtension.ts`) con bloqueo frente a corrupción por *Reemplazar todo*, historial limpio en sincronizaciones externas (`Transaction.addToHistory.of(false)` en `RawEditor.tsx`), prevención de doble disparo en `Ctrl+S` / `Ctrl+Shift+S`, estilos `@media print` multipágina y permisos/gestos síncronos en la extensión MV3 (`background.ts`, `mdViewerContent.ts`).
+
 ## [2026.11.16.2] - 2026-11-16
 
 ### Corregido

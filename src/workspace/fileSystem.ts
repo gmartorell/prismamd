@@ -17,6 +17,7 @@ export interface EditorTab {
   isScratchpad?: boolean;
   fileHandle?: FileSystemFileHandle;
   relativePath?: string;
+  diskLastModified?: number;
 }
 
 export interface FolderEntry {
@@ -24,6 +25,7 @@ export interface FolderEntry {
   path: string;
   kind: 'file' | 'directory';
   handle: FileSystemFileHandle | FileSystemDirectoryHandle;
+  readOnly?: boolean;
   children?: FolderEntry[];
   loaded?: boolean;
   loading?: boolean;
@@ -36,7 +38,10 @@ export interface PersistedTabSnapshot {
   savedContent: string;
   isScratchpad?: boolean;
   relativePath?: string;
+  diskLastModified?: number;
 }
+
+export type TabSessionSnapshot = PersistedTabSnapshot;
 
 export interface PersistedSession {
   tabs: PersistedTabSnapshot[];
@@ -46,6 +51,33 @@ export interface PersistedSession {
   explorerOpen: boolean;
   outlineOpen: boolean;
   scrollSync: boolean;
+}
+
+export interface SaveTabResult {
+  title: string;
+  fileHandle?: FileSystemFileHandle;
+  lastModified: number;
+  usedFallbackSaveAs?: boolean;
+}
+
+export interface DiskFileCheckResult {
+  changed: boolean;
+  content?: string;
+  lastModified?: number;
+}
+
+export interface DirectoryEntryNode {
+  name: string;
+  path: string;
+  kind: 'file' | 'directory';
+  readOnly: true;
+  file?: File;
+  children?: Map<string, DirectoryEntryNode>;
+}
+
+export interface VirtualDirectoryHandle extends FileSystemDirectoryHandle {
+  readonly readOnly: true;
+  readonly isVirtual: true;
 }
 
 interface PermissionDescriptorLike {
@@ -86,6 +118,15 @@ const SCRATCHPAD_APPEND_KEY = 'prismamd_scratchpad_append';
 
 const MARKDOWN_FILE_RE = /\.(md|markdown|mdx|mdown)$/i;
 
+const READONLY_WRITE_ERRORS = new Set([
+  'NotAllowedError',
+  'InvalidModificationError',
+  'NoModificationAllowedError',
+  'SecurityError',
+]);
+
+let sessionSaveQueue: Promise<void> = Promise.resolve();
+
 export function isMarkdownFilename(name: string): boolean {
   return MARKDOWN_FILE_RE.test(name);
 }
@@ -94,19 +135,36 @@ export function createTabId(): string {
   return `tab-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
 }
 
-export async function saveSessionToStorage(session: PersistedSession, tabs: EditorTab[]): Promise<void> {
-  try {
-    await idbSet(SESSION_KEY, session);
-    const handlesObj: Record<string, FileSystemFileHandle> = {};
-    for (const tab of tabs) {
-      if (tab.fileHandle) {
-        handlesObj[tab.id] = tab.fileHandle;
+export function isVirtualDirectoryHandle(
+  handle: FileSystemDirectoryHandle | null | undefined,
+): handle is VirtualDirectoryHandle {
+  return Boolean(handle && (handle as Partial<VirtualDirectoryHandle>).isVirtual === true);
+}
+
+export function saveSessionToStorage(session: PersistedSession, tabs: EditorTab[]): Promise<void> {
+  const sessionSnapshot: PersistedSession = {
+    ...session,
+    tabs: session.tabs.map((tb) => ({ ...tb })),
+  };
+  const tabsSnapshot = tabs.slice();
+
+  const run = sessionSaveQueue.then(async () => {
+    try {
+      const handlesObj: Record<string, FileSystemFileHandle> = {};
+      for (const tab of tabsSnapshot) {
+        if (tab.fileHandle && !tab.isScratchpad) {
+          handlesObj[tab.id] = tab.fileHandle;
+        }
       }
+      await idbSet(SESSION_KEY, sessionSnapshot);
+      await idbSet(FILE_HANDLES_KEY, handlesObj);
+    } catch {
+      // Fallback quietly if IndexedDB is unavailable
     }
-    await idbSet(FILE_HANDLES_KEY, handlesObj);
-  } catch {
-    // Fallback quietly if IndexedDB is unavailable
-  }
+  });
+
+  sessionSaveQueue = run.catch(() => undefined);
+  return run;
 }
 
 export async function loadSessionFromStorage(): Promise<{
@@ -133,6 +191,9 @@ export async function loadSessionFromStorage(): Promise<{
 }
 
 export async function saveDirectoryHandle(handle: FileSystemDirectoryHandle | null): Promise<void> {
+  if (handle && isVirtualDirectoryHandle(handle)) {
+    return;
+  }
   try {
     await idbSet(DIR_HANDLE_KEY, handle);
   } catch {
@@ -141,6 +202,9 @@ export async function saveDirectoryHandle(handle: FileSystemDirectoryHandle | nu
 }
 
 export async function isDirectoryWritable(handle: FileSystemDirectoryHandle): Promise<boolean> {
+  if (isVirtualDirectoryHandle(handle)) {
+    return false;
+  }
   try {
     const permHandle = handle as unknown as HandleWithPermission;
     if (!permHandle.queryPermission) return true;
@@ -179,6 +243,9 @@ export async function loadSavedDirectoryHandle(): Promise<{
 export async function ensureDirectoryPermission(
   handle: FileSystemDirectoryHandle,
 ): Promise<{ granted: boolean; readOnly: boolean }> {
+  if (isVirtualDirectoryHandle(handle)) {
+    return { granted: true, readOnly: true };
+  }
   const permHandle = handle as unknown as HandleWithPermission;
   if (!permHandle.requestPermission) return { granted: true, readOnly: false };
   try {
@@ -196,17 +263,92 @@ export async function ensureDirectoryPermission(
   return { granted: false, readOnly: false };
 }
 
-export async function ensureFilePermission(handle: FileSystemFileHandle): Promise<boolean> {
+export async function ensureFilePermission(
+  handle: FileSystemFileHandle,
+  mode: 'read' | 'readwrite' = 'readwrite',
+): Promise<boolean> {
   const permHandle = handle as unknown as HandleWithPermission;
-  if (permHandle.queryPermission) {
-    const current = await permHandle.queryPermission({ mode: 'readwrite' });
-    if (current === 'granted') return true;
+  try {
+    if (permHandle.queryPermission) {
+      const current = await permHandle.queryPermission({ mode });
+      if (current === 'granted') return true;
+      if (current === 'denied') return false;
+    }
+  } catch {
+    // Fall through to requestPermission if available
   }
-  if (permHandle.requestPermission) {
-    const requested = await permHandle.requestPermission({ mode: 'readwrite' });
-    return requested === 'granted';
+  try {
+    if (permHandle.requestPermission) {
+      const requested = await permHandle.requestPermission({ mode });
+      return requested === 'granted';
+    }
+  } catch {
+    return false;
   }
-  return true;
+  return !permHandle.queryPermission && !permHandle.requestPermission;
+}
+
+async function readHandleLastModified(handle: FileSystemFileHandle): Promise<number> {
+  if (typeof handle.getFile === 'function') {
+    try {
+      const file = await handle.getFile();
+      if (typeof file.lastModified === 'number') {
+        return file.lastModified;
+      }
+    } catch {
+      // Fall back to current timestamp if handle mock lacks getFile
+    }
+  }
+  return Date.now();
+}
+
+export async function readFileFromHandle(
+  fileHandle: FileSystemFileHandle,
+  relativePath?: string,
+): Promise<{
+  title: string;
+  content: string;
+  fileHandle: FileSystemFileHandle;
+  relativePath?: string;
+  lastModified: number;
+}> {
+  const file = await fileHandle.getFile();
+  const content = await file.text();
+  return {
+    title: file.name,
+    content,
+    fileHandle,
+    relativePath,
+    lastModified: file.lastModified,
+  };
+}
+
+export async function readDiskFileIfChanged(
+  handle?: FileSystemFileHandle,
+  knownLastModified?: number,
+): Promise<DiskFileCheckResult> {
+  if (!handle || typeof handle.getFile !== 'function') {
+    return { changed: false };
+  }
+  try {
+    const permitted = await ensureFilePermission(handle, 'read');
+    if (!permitted) {
+      return { changed: false };
+    }
+    const file = await handle.getFile();
+    const lastModified = file.lastModified;
+    if (knownLastModified !== undefined && lastModified === knownLastModified) {
+      return { changed: false, lastModified };
+    }
+    const content = await file.text();
+    return {
+      changed: true,
+      content,
+      lastModified,
+    };
+  } catch {
+    return { changed: false };
+  }
 }
 
 export async function openMarkdownFilesFromPicker(): Promise<LoadedMarkdownFile[]> {
@@ -230,6 +372,7 @@ export async function openMarkdownFilesFromPicker(): Promise<LoadedMarkdownFile[
         title: file.name,
         content: await file.text(),
         fileHandle: handle,
+        lastModified: file.lastModified,
       });
     }
     return results;
@@ -240,12 +383,14 @@ export async function openMarkdownFilesFromPicker(): Promise<LoadedMarkdownFile[
     input.type = 'file';
     input.multiple = true;
     input.accept = '.md,.markdown,.mdx,.mdown,text/markdown';
+    input.addEventListener('cancel', () => resolve([]));
     input.onchange = async () => {
       const files = Array.from(input.files ?? []).filter((f) => isMarkdownFilename(f.name));
       const loaded = await Promise.all(
         files.map(async (f) => ({
           title: f.name,
           content: await f.text(),
+          lastModified: f.lastModified,
         })),
       );
       resolve(loaded);
@@ -254,12 +399,21 @@ export async function openMarkdownFilesFromPicker(): Promise<LoadedMarkdownFile[
   });
 }
 
+export async function openMarkdownFileFromPicker(): Promise<LoadedMarkdownFile | null> {
+  const files = await openMarkdownFilesFromPicker();
+  return files[0] ?? null;
+}
+
+export function normalizeDownloadFilename(filename: string): string {
+  return MARKDOWN_FILE_RE.test(filename) ? filename : `${filename}.md`;
+}
+
 function triggerBrowserDownload(filename: string, content: string, mime = 'text/markdown;charset=utf-8'): void {
   const blob = new Blob([content], { type: mime });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = filename.endsWith('.md') || filename.endsWith('.markdown') ? filename : `${filename}.md`;
+  a.download = normalizeDownloadFilename(filename);
   document.body.appendChild(a);
   a.click();
   a.remove();
@@ -269,38 +423,72 @@ function triggerBrowserDownload(filename: string, content: string, mime = 'text/
 export async function saveTabToDisk(
   tab: EditorTab,
   forceSaveAs = false,
-): Promise<{ title: string; fileHandle?: FileSystemFileHandle }> {
+  defaultName = 'nota-rapida.md',
+): Promise<SaveTabResult> {
+  let fellBackFromReadOnly = false;
+
   if (!forceSaveAs && tab.fileHandle) {
-    const ok = await ensureFilePermission(tab.fileHandle);
-    if (ok) {
-      const writable = await tab.fileHandle.createWritable();
-      await writable.write(tab.content);
-      await writable.close();
-      return { title: tab.fileHandle.name, fileHandle: tab.fileHandle };
+    if (typeof tab.fileHandle.createWritable !== 'function') {
+      fellBackFromReadOnly = true;
+    } else {
+      const ok = await ensureFilePermission(tab.fileHandle, 'readwrite');
+      if (ok) {
+        try {
+          const writable = await tab.fileHandle.createWritable();
+          await writable.write(tab.content);
+          await writable.close();
+          const lastModified = await readHandleLastModified(tab.fileHandle);
+          return {
+            title: tab.fileHandle.name,
+            fileHandle: tab.fileHandle,
+            lastModified,
+          };
+        } catch (err) {
+          const errName = (err as { name?: string })?.name ?? '';
+          if (READONLY_WRITE_ERRORS.has(errName)) {
+            fellBackFromReadOnly = true;
+          } else {
+            throw err;
+          }
+        }
+      } else {
+        fellBackFromReadOnly = true;
+      }
     }
-    // Read-only handle: fall through to Save As picker or browser download
   }
 
+  const suggestedName = tab.isScratchpad ? defaultName : tab.title || defaultName;
+
   if (typeof window.showSaveFilePicker === 'function') {
-    const suggestedName = tab.isScratchpad ? 'nota-rapida.md' : tab.title;
     const handle = await window.showSaveFilePicker({
       suggestedName,
       types: [
         {
           description: 'Markdown',
-          accept: { 'text/markdown': ['.md', '.markdown'] },
+          accept: { 'text/markdown': ['.md', '.markdown', '.mdx', '.mdown'] },
         },
       ],
     });
     const writable = await handle.createWritable();
     await writable.write(tab.content);
     await writable.close();
-    return { title: handle.name, fileHandle: handle };
+    const lastModified = await readHandleLastModified(handle);
+    return {
+      title: handle.name,
+      fileHandle: handle,
+      lastModified,
+      ...(fellBackFromReadOnly ? { usedFallbackSaveAs: true } : {}),
+    };
   }
 
-  const downloadName = tab.isScratchpad ? 'nota-rapida.md' : tab.title;
+  const downloadName = normalizeDownloadFilename(suggestedName);
   triggerBrowserDownload(downloadName, tab.content);
-  return { title: downloadName, fileHandle: undefined };
+  return {
+    title: downloadName,
+    fileHandle: undefined,
+    lastModified: Date.now(),
+    ...(fellBackFromReadOnly ? { usedFallbackSaveAs: true } : {}),
+  };
 }
 
 const IGNORED_DIR_NAMES = new Set([
@@ -322,18 +510,181 @@ export function shouldSkipDirectoryEntry(name: string): boolean {
   return name.startsWith('.') || IGNORED_DIR_NAMES.has(name);
 }
 
+function createVirtualFileHandle(node: DirectoryEntryNode): FileSystemFileHandle {
+  const file = node.file!;
+  const handle = {
+    kind: 'file' as const,
+    name: node.name,
+    getFile: async () => file,
+    queryPermission: async (desc?: PermissionDescriptorLike): Promise<PermissionState> =>
+      desc?.mode === 'readwrite' ? 'denied' : 'granted',
+    requestPermission: async (desc?: PermissionDescriptorLike): Promise<PermissionState> =>
+      desc?.mode === 'readwrite' ? 'denied' : 'granted',
+    isSameEntry: async (other: FileSystemHandle) => other === (handle as unknown as FileSystemHandle),
+  };
+  return handle as unknown as FileSystemFileHandle;
+}
+
+function createVirtualDirectoryHandleFromNode(node: DirectoryEntryNode): VirtualDirectoryHandle {
+  const handle = {
+    kind: 'directory' as const,
+    name: node.name,
+    readOnly: true as const,
+    isVirtual: true as const,
+    queryPermission: async (desc?: PermissionDescriptorLike): Promise<PermissionState> =>
+      desc?.mode === 'readwrite' ? 'denied' : 'granted',
+    requestPermission: async (desc?: PermissionDescriptorLike): Promise<PermissionState> =>
+      desc?.mode === 'readwrite' ? 'denied' : 'granted',
+    isSameEntry: async (other: FileSystemHandle) => other === (handle as unknown as FileSystemHandle),
+    getFileHandle: async (
+      name: string,
+      options?: { create?: boolean },
+    ): Promise<FileSystemFileHandle> => {
+      if (options?.create) {
+        const err = new Error('Read-only virtual directory');
+        err.name = 'NotAllowedError';
+        throw err;
+      }
+      const child = node.children?.get(name);
+      if (!child || child.kind !== 'file') {
+        const err = new Error(`File not found: ${name}`);
+        err.name = 'NotFoundError';
+        throw err;
+      }
+      return createVirtualFileHandle(child);
+    },
+    getDirectoryHandle: async (
+      name: string,
+      options?: { create?: boolean },
+    ): Promise<FileSystemDirectoryHandle> => {
+      if (options?.create) {
+        const err = new Error('Read-only virtual directory');
+        err.name = 'NotAllowedError';
+        throw err;
+      }
+      const child = node.children?.get(name);
+      if (!child || child.kind !== 'directory') {
+        const err = new Error(`Directory not found: ${name}`);
+        err.name = 'NotFoundError';
+        throw err;
+      }
+      return createVirtualDirectoryHandleFromNode(child);
+    },
+    values: async function* () {
+      if (!node.children) return;
+      for (const child of node.children.values()) {
+        if (child.kind === 'directory') {
+          yield createVirtualDirectoryHandleFromNode(child);
+        } else if (child.file) {
+          yield createVirtualFileHandle(child);
+        }
+      }
+    },
+  };
+  return handle as unknown as VirtualDirectoryHandle;
+}
+
+export function buildVirtualDirectoryFromFiles(
+  files: Iterable<File>,
+  fallbackName = 'Folder',
+): VirtualDirectoryHandle | null {
+  const fileList = Array.from(files);
+  if (fileList.length === 0) return null;
+
+  let rootName = fallbackName;
+  for (const file of fileList) {
+    const rel = (file as File & { webkitRelativePath?: string }).webkitRelativePath ?? '';
+    const firstPart = rel.split('/').filter(Boolean)[0];
+    if (firstPart) {
+      rootName = firstPart;
+      break;
+    }
+  }
+
+  const rootNode: DirectoryEntryNode = {
+    name: rootName,
+    path: '',
+    kind: 'directory',
+    readOnly: true,
+    children: new Map(),
+  };
+
+  for (const file of fileList) {
+    const rawRel = (file as File & { webkitRelativePath?: string }).webkitRelativePath || file.name;
+    const parts = rawRel.split('/').filter(Boolean);
+    const relativeSegments = parts.length > 1 && parts[0] === rootName ? parts.slice(1) : parts;
+    if (relativeSegments.length === 0) continue;
+
+    let currentDir = rootNode;
+    let skipEntry = false;
+    for (let i = 0; i < relativeSegments.length - 1; i++) {
+      const seg = relativeSegments[i];
+      if (shouldSkipDirectoryEntry(seg)) {
+        skipEntry = true;
+        break;
+      }
+      const nextPath = currentDir.path ? `${currentDir.path}/${seg}` : seg;
+      let sub = currentDir.children!.get(seg);
+      if (!sub) {
+        sub = {
+          name: seg,
+          path: nextPath,
+          kind: 'directory',
+          readOnly: true,
+          children: new Map(),
+        };
+        currentDir.children!.set(seg, sub);
+      }
+      currentDir = sub;
+    }
+    if (skipEntry) continue;
+
+    const fileName = relativeSegments[relativeSegments.length - 1];
+    if (shouldSkipDirectoryEntry(fileName) || !isMarkdownFilename(fileName)) continue;
+
+    const filePath = currentDir.path ? `${currentDir.path}/${fileName}` : fileName;
+    currentDir.children!.set(fileName, {
+      name: fileName,
+      path: filePath,
+      kind: 'file',
+      readOnly: true,
+      file,
+    });
+  }
+
+  return createVirtualDirectoryHandleFromNode(rootNode);
+}
+
 export async function openFolderPicker(): Promise<FileSystemDirectoryHandle | null> {
-  if (typeof window.showDirectoryPicker !== 'function') {
+  if (typeof window.showDirectoryPicker === 'function') {
+    try {
+      return await window.showDirectoryPicker({ mode: 'readwrite' });
+    } catch (err) {
+      if ((err as { name?: string })?.name === 'AbortError') {
+        throw err;
+      }
+      return await window.showDirectoryPicker({ mode: 'read' });
+    }
+  }
+
+  if (typeof document === 'undefined') {
     return null;
   }
-  try {
-    return await window.showDirectoryPicker({ mode: 'readwrite' });
-  } catch (err) {
-    if ((err as { name?: string })?.name === 'AbortError') {
-      throw err;
-    }
-    return await window.showDirectoryPicker({ mode: 'read' });
-  }
+
+  return await new Promise<FileSystemDirectoryHandle | null>((resolve) => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.multiple = true;
+    input.accept = '.md,.markdown,.mdx,.mdown';
+    input.setAttribute('webkitdirectory', '');
+    (input as HTMLInputElement & { webkitdirectory?: boolean }).webkitdirectory = true;
+    input.addEventListener('cancel', () => resolve(null));
+    input.onchange = () => {
+      const handle = buildVirtualDirectoryFromFiles(input.files ?? []);
+      resolve(handle);
+    };
+    input.click();
+  });
 }
 
 /**
@@ -345,6 +696,7 @@ export async function readDirectoryChildren(
   basePath = '',
 ): Promise<FolderEntry[]> {
   const entries: FolderEntry[] = [];
+  const isVirtualRo = isVirtualDirectoryHandle(dirHandle);
   const rawValues = (dirHandle as unknown as {
     values: () => AsyncIterable<FileSystemFileHandle | FileSystemDirectoryHandle>;
   }).values();
@@ -374,6 +726,7 @@ export async function readDirectoryChildren(
           path: entryPath,
           kind: 'directory',
           handle,
+          ...(isVirtualRo ? { readOnly: true } : {}),
           children: [],
           loaded: false,
           loading: false,
@@ -384,6 +737,7 @@ export async function readDirectoryChildren(
           path: entryPath,
           kind: 'file',
           handle,
+          ...(isVirtualRo ? { readOnly: true } : {}),
         });
       }
     } catch {
@@ -424,20 +778,50 @@ export function updateDirectoryEntry(
 
 export async function createFileInFolder(
   dirHandle: FileSystemDirectoryHandle,
-  rawName: string,
-): Promise<{ title: string; content: string; fileHandle: FileSystemFileHandle; relativePath: string }> {
-  const clean = rawName.trim().replace(/[/\\]/g, '');
-  const title = isMarkdownFilename(clean) ? clean : `${clean || 'nueva-nota'}.md`;
-  const fileHandle = await dirHandle.getFileHandle(title, { create: true });
-  const initialContent = `# ${title.replace(/\.[^.]+$/, '')}\n\n`;
+  rawName?: string,
+  defaultBaseName = 'nueva-nota.md',
+): Promise<{
+  title: string;
+  content: string;
+  fileHandle: FileSystemFileHandle;
+  relativePath: string;
+  lastModified: number;
+}> {
+  const candidate = rawName === undefined ? defaultBaseName.trim() : rawName.trim();
+  if (!candidate || /[/\\]/.test(candidate) || candidate.startsWith('.')) {
+    throw new Error('INVALID_FILENAME');
+  }
+
+  const finalName = isMarkdownFilename(candidate) ? candidate : `${candidate}.md`;
+
+  let fileExists = false;
+  try {
+    await dirHandle.getFileHandle(finalName, { create: false });
+    fileExists = true;
+  } catch (err) {
+    const errName = (err as { name?: string })?.name;
+    if (errName !== 'NotFoundError') {
+      throw err;
+    }
+  }
+
+  if (fileExists) {
+    throw new Error(`FILE_EXISTS:${finalName}`);
+  }
+
+  const fileHandle = await dirHandle.getFileHandle(finalName, { create: true });
+  const initialContent = `# ${finalName.replace(/\.[^.]+$/, '')}\n\n`;
   const writable = await fileHandle.createWritable();
   await writable.write(initialContent);
   await writable.close();
+  const lastModified = await readHandleLastModified(fileHandle);
+
   return {
-    title,
+    title: finalName,
     content: initialContent,
     fileHandle,
-    relativePath: title,
+    relativePath: finalName,
+    lastModified,
   };
 }
 
@@ -445,14 +829,20 @@ export interface IncomingExtensionPayload {
   filename: string;
   content: string;
   sourceUrl?: string;
+  targetSurface?: 'tab' | 'sidepanel' | 'any';
 }
 
-export async function consumeExtensionIncomingFile(): Promise<IncomingExtensionPayload | null> {
+export async function consumeExtensionIncomingMarkdown(
+  isSidePanel = false,
+): Promise<IncomingExtensionPayload | null> {
   try {
     if (typeof chrome !== 'undefined' && chrome.storage?.local) {
       const data = await chrome.storage.local.get(VIEWER_INCOMING_KEY);
       const payload = data[VIEWER_INCOMING_KEY] as IncomingExtensionPayload | undefined;
       if (payload && typeof payload.content === 'string') {
+        if (isSidePanel && payload.targetSurface === 'tab') {
+          return null;
+        }
         await chrome.storage.local.remove(VIEWER_INCOMING_KEY);
         return payload;
       }
@@ -462,6 +852,8 @@ export async function consumeExtensionIncomingFile(): Promise<IncomingExtensionP
   }
   return null;
 }
+
+export const consumeExtensionIncomingFile = consumeExtensionIncomingMarkdown;
 
 export async function consumePendingScratchpadAppend(): Promise<string | null> {
   try {
@@ -485,6 +877,7 @@ export interface LoadedMarkdownFile {
   fileHandle?: FileSystemFileHandle;
   relativePath?: string;
   matchedTabId?: string;
+  lastModified?: number;
 }
 
 export async function isSameFileHandle(
@@ -529,6 +922,7 @@ export function mergeOpenedFilesIntoTabs(
         savedContent: item.content,
         fileHandle: item.fileHandle ?? existing.fileHandle,
         relativePath: item.relativePath ?? existing.relativePath,
+        diskLastModified: item.lastModified ?? existing.diskLastModified,
       };
       targetActiveId = existing.id;
       continue;
@@ -542,6 +936,7 @@ export function mergeOpenedFilesIntoTabs(
       savedContent: item.content,
       fileHandle: item.fileHandle,
       relativePath: item.relativePath,
+      diskLastModified: item.lastModified,
     });
     targetActiveId = id;
   }
@@ -602,6 +997,7 @@ async function processLaunchParams(params: LaunchParamsLike): Promise<void> {
         title: file.name,
         content: await file.text(),
         fileHandle: handle,
+        lastModified: file.lastModified,
       });
     } catch {
       // Skip unreadable handles

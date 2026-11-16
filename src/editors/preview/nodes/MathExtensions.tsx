@@ -1,5 +1,6 @@
 import { Node, mergeAttributes } from '@tiptap/core';
 import type { Node as PMNode } from '@tiptap/pm/model';
+import { TextSelection } from '@tiptap/pm/state';
 import { render } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { renderLatexHtml } from '../../../renderers/katexRenderer';
@@ -9,18 +10,27 @@ interface MathViewProps {
   latex: string;
   displayMode: boolean;
   onChange: (nextLatex: string) => void;
+  onDelete?: () => void;
+  onRefocusEditor?: () => void;
 }
 
-function MathView({ latex, displayMode, onChange }: MathViewProps) {
+function MathView({ latex, displayMode, onChange, onDelete, onRefocusEditor }: MathViewProps) {
   const { t } = useNodeUiContext();
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(latex);
   const [html, setHtml] = useState('');
+  const [alignRight, setAlignRight] = useState(false);
+  const wrapRef = useRef<HTMLSpanElement | null>(null);
   const inputRef = useRef<HTMLInputElement | HTMLTextAreaElement | null>(null);
+  const draftRef = useRef(latex);
+  const skipBlurCommitRef = useRef(false);
 
   useEffect(() => {
-    setDraft(latex);
-  }, [latex]);
+    if (!editing) {
+      draftRef.current = latex;
+      setDraft(latex);
+    }
+  }, [latex, editing]);
 
   useEffect(() => {
     let active = true;
@@ -38,11 +48,40 @@ function MathView({ latex, displayMode, onChange }: MathViewProps) {
     }
   }, [editing]);
 
-  const commit = () => {
-    setEditing(false);
-    if (draft !== latex) {
-      onChange(draft);
+  const openEditing = () => {
+    skipBlurCommitRef.current = false;
+    draftRef.current = latex;
+    setDraft(latex);
+    if (!displayMode && wrapRef.current) {
+      const rect = wrapRef.current.getBoundingClientRect();
+      const container = wrapRef.current.closest('.preview-editor-shell');
+      const rightLimit = container ? container.getBoundingClientRect().right : window.innerWidth;
+      setAlignRight(rect.left + 226 > rightLimit);
     }
+    setEditing(true);
+  };
+
+  const commit = (shouldRefocus: boolean) => {
+    if (skipBlurCommitRef.current) return;
+    skipBlurCommitRef.current = true;
+    const finalValue = draftRef.current;
+    setEditing(false);
+    if (!displayMode && finalValue.trim() === '') {
+      onDelete?.();
+    } else if (finalValue !== latex) {
+      onChange(finalValue);
+    }
+    if (shouldRefocus) {
+      onRefocusEditor?.();
+    }
+  };
+
+  const cancel = () => {
+    skipBlurCommitRef.current = true;
+    draftRef.current = latex;
+    setDraft(latex);
+    setEditing(false);
+    onRefocusEditor?.();
   };
 
   if (displayMode) {
@@ -53,16 +92,31 @@ function MathView({ latex, displayMode, onChange }: MathViewProps) {
             <span className="pm-block-badge pm-badge-math">LaTeX</span>
             <span>{t.blocks.mathBlockTitle}</span>
           </span>
-          <button
-            type="button"
-            className="pm-mini-btn"
-            onClick={() => {
-              if (editing) commit();
-              else setEditing(true);
-            }}
-          >
-            {editing ? t.blocks.apply : t.blocks.editCode}
-          </button>
+          <span style={{ display: 'inline-flex', gap: '4px' }}>
+            {editing && (
+              <button
+                type="button"
+                className="pm-mini-btn"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={cancel}
+              >
+                {t.blocks.cancel}
+              </button>
+            )}
+            <button
+              type="button"
+              className="pm-mini-btn"
+              onMouseDown={(e) => {
+                if (editing) e.preventDefault();
+              }}
+              onClick={() => {
+                if (editing) commit(true);
+                else openEditing();
+              }}
+            >
+              {editing ? t.blocks.apply : t.blocks.editCode}
+            </button>
+          </span>
         </div>
 
         {editing && (
@@ -77,14 +131,26 @@ function MathView({ latex, displayMode, onChange }: MathViewProps) {
               placeholder={t.blocks.latexPlaceholder}
               onInput={(e) => {
                 const next = (e.currentTarget as HTMLTextAreaElement).value;
+                draftRef.current = next;
                 setDraft(next);
-                onChange(next);
               }}
               onKeyDown={(e) => {
                 if (e.key === 'Escape') {
                   e.preventDefault();
-                  commit();
+                  e.stopPropagation();
+                  cancel();
+                } else if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  commit(true);
                 }
+              }}
+              onBlur={() => {
+                if (skipBlurCommitRef.current) {
+                  skipBlurCommitRef.current = false;
+                  return;
+                }
+                commit(false);
               }}
             />
           </div>
@@ -93,13 +159,13 @@ function MathView({ latex, displayMode, onChange }: MathViewProps) {
         <div
           className="pm-math-display"
           onClick={() => {
-            if (!editing) setEditing(true);
+            if (!editing) openEditing();
           }}
         >
           {html ? (
             <span dangerouslySetInnerHTML={{ __html: html }} />
           ) : (
-            <code className="pm-empty-hint">{latex || t.blocks.latexPlaceholder}</code>
+            <code className="pm-empty-hint">{latex.trim() || t.blocks.latexPlaceholder}</code>
           )}
         </div>
       </div>
@@ -107,19 +173,31 @@ function MathView({ latex, displayMode, onChange }: MathViewProps) {
   }
 
   return (
-    <span className="pm-math-inline-wrap pm-interactive" contentEditable={false}>
+    <span ref={wrapRef} className="pm-math-inline-wrap pm-interactive" contentEditable={false}>
       <span
         className="pm-math-inline"
+        onMouseDown={(e) => {
+          if (editing) {
+            e.preventDefault();
+          }
+        }}
         onClick={(e) => {
           e.stopPropagation();
-          setEditing((v) => !v);
+          if (editing) {
+            commit(true);
+          } else {
+            openEditing();
+          }
         }}
         title={t.blocks.mathInlineTitle}
       >
         {html ? <span dangerouslySetInnerHTML={{ __html: html }} /> : <code>${latex}$</code>}
       </span>
       {editing && (
-        <span className="pm-math-inline-popover">
+        <span
+          className="pm-math-inline-popover"
+          style={alignRight ? { left: 'auto', right: '0' } : undefined}
+        >
           <input
             ref={(el) => {
               inputRef.current = el;
@@ -130,16 +208,27 @@ function MathView({ latex, displayMode, onChange }: MathViewProps) {
             placeholder={t.blocks.latexPlaceholder}
             onInput={(e) => {
               const next = (e.currentTarget as HTMLInputElement).value;
+              draftRef.current = next;
               setDraft(next);
-              onChange(next);
             }}
             onKeyDown={(e) => {
-              if (e.key === 'Enter' || e.key === 'Escape') {
+              if (e.key === 'Enter') {
                 e.preventDefault();
-                commit();
+                e.stopPropagation();
+                commit(true);
+              } else if (e.key === 'Escape') {
+                e.preventDefault();
+                e.stopPropagation();
+                cancel();
               }
             }}
-            onBlur={commit}
+            onBlur={() => {
+              if (skipBlurCommitRef.current) {
+                skipBlurCommitRef.current = false;
+                return;
+              }
+              commit(false);
+            }}
           />
         </span>
       )}
@@ -165,8 +254,13 @@ export const MathInlineExtension = Node.create({
     return [{ tag: 'span[data-type="math-inline"]' }];
   },
 
-  renderHTML({ HTMLAttributes }) {
-    return ['span', mergeAttributes(HTMLAttributes, { 'data-type': 'math-inline' })];
+  renderHTML({ node, HTMLAttributes }) {
+    const val = String(node.attrs.latex ?? '');
+    return ['span', mergeAttributes(HTMLAttributes, { 'data-type': 'math-inline' }), `$${val}$`];
+  },
+
+  renderText({ node }) {
+    return `$${String(node.attrs.latex ?? '')}$`;
   },
 
   addNodeView() {
@@ -178,6 +272,11 @@ export const MathInlineExtension = Node.create({
       const updateLatex = (nextLatex: string) => {
         const pos = typeof getPos === 'function' ? getPos() : undefined;
         if (typeof pos !== 'number') return;
+        const trimmed = nextLatex.trim();
+        if (!trimmed) {
+          deleteSelf();
+          return;
+        }
         editor.view.dispatch(
           editor.state.tr.setNodeMarkup(pos, undefined, {
             ...currentNode.attrs,
@@ -186,10 +285,42 @@ export const MathInlineExtension = Node.create({
         );
       };
 
+      const deleteSelf = () => {
+        if (editor.isDestroyed) return;
+        const pos = typeof getPos === 'function' ? getPos() : undefined;
+        if (typeof pos !== 'number') return;
+        const nodeAtPos = editor.state.doc.nodeAt(pos);
+        if (!nodeAtPos || nodeAtPos.type.name !== 'mathInline') return;
+        editor.view.dispatch(editor.state.tr.delete(pos, pos + nodeAtPos.nodeSize));
+      };
+
+      const refocusEditor = () => {
+        if (editor.isDestroyed) return;
+        const pos = typeof getPos === 'function' ? getPos() : undefined;
+        if (typeof pos === 'number' && pos >= 0 && pos <= editor.state.doc.content.size) {
+          const nodeAtPos = editor.state.doc.nodeAt(pos);
+          const targetPos =
+            nodeAtPos?.type.name === 'mathInline'
+              ? Math.min(editor.state.doc.content.size, pos + nodeAtPos.nodeSize)
+              : pos;
+          const tr = editor.state.tr
+            .setSelection(TextSelection.near(editor.state.doc.resolve(targetPos)))
+            .setMeta('addToHistory', false);
+          editor.view.dispatch(tr);
+        }
+        editor.view.focus();
+      };
+
       const mount = (pmNode: PMNode) => {
         currentNode = pmNode;
         render(
-          <MathView latex={String(pmNode.attrs.latex ?? '')} displayMode={false} onChange={updateLatex} />,
+          <MathView
+            latex={String(pmNode.attrs.latex ?? '')}
+            displayMode={false}
+            onChange={updateLatex}
+            onDelete={deleteSelf}
+            onRefocusEditor={refocusEditor}
+          />,
           dom,
         );
       };
@@ -236,8 +367,13 @@ export const MathBlockExtension = Node.create({
     return [{ tag: 'div[data-type="math-block"]' }];
   },
 
-  renderHTML({ HTMLAttributes }) {
-    return ['div', mergeAttributes(HTMLAttributes, { 'data-type': 'math-block' })];
+  renderHTML({ node, HTMLAttributes }) {
+    const val = String(node.attrs.latex ?? '');
+    return ['div', mergeAttributes(HTMLAttributes, { 'data-type': 'math-block' }), `$$\n${val}\n$$`];
+  },
+
+  renderText({ node }) {
+    return `$$\n${String(node.attrs.latex ?? '')}\n$$`;
   },
 
   addNodeView() {
@@ -257,10 +393,21 @@ export const MathBlockExtension = Node.create({
         );
       };
 
+      const refocusEditor = () => {
+        if (!editor.isDestroyed) {
+          editor.commands.focus();
+        }
+      };
+
       const mount = (pmNode: PMNode) => {
         currentNode = pmNode;
         render(
-          <MathView latex={String(pmNode.attrs.latex ?? '')} displayMode={true} onChange={updateLatex} />,
+          <MathView
+            latex={String(pmNode.attrs.latex ?? '')}
+            displayMode={true}
+            onChange={updateLatex}
+            onRefocusEditor={refocusEditor}
+          />,
           dom,
         );
       };

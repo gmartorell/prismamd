@@ -141,22 +141,31 @@ export async function checkForAppUpdates(currentVersion = getCurrentVersion()): 
   try {
     const res = await fetch(`./version.json?_=${Date.now()}`, { cache: 'no-store' });
     if (res.ok) {
-      const payload = (await res.json()) as { version?: string };
-      const remoteVersion = typeof payload?.version === 'string' ? payload.version.trim() : '';
-      if (remoteVersion) {
-        if (compareVersions(remoteVersion, currentVersion) > 0) {
+      const contentType = res.headers?.get?.('content-type');
+      const looksLikeJson = !contentType || contentType.toLowerCase().includes('json');
+      if (looksLikeJson) {
+        let payload: { version?: string; buildHash?: string } | null = null;
+        try {
+          payload = (await res.json()) as { version?: string; buildHash?: string };
+        } catch {
+          payload = null;
+        }
+        const remoteVersion = typeof payload?.version === 'string' ? payload.version.trim() : '';
+        if (remoteVersion) {
+          if (compareVersions(remoteVersion, currentVersion) > 0) {
+            return {
+              status: 'update-available',
+              currentVersion,
+              latestVersion: remoteVersion,
+              canApplyReload: true,
+            };
+          }
           return {
-            status: 'update-available',
+            status: 'up-to-date',
             currentVersion,
             latestVersion: remoteVersion,
-            canApplyReload: true,
           };
         }
-        return {
-          status: 'up-to-date',
-          currentVersion,
-          latestVersion: remoteVersion,
-        };
       }
     }
   } catch {
@@ -234,7 +243,8 @@ export function subscribePwaUpdateReady(onResult: (result: UpdateCheckResult) =>
 }
 
 /**
- * Applies a pending update by promoting a waiting Service Worker, clearing stale caches, and reloading.
+ * Applies a pending update by promoting a waiting Service Worker (whose activate
+ * handler removes stale caches while keeping the new precache intact) and reloading.
  */
 export async function applyPendingUpdate(): Promise<void> {
   if (getRuntimeChannel() === 'extension') {
@@ -247,20 +257,12 @@ export async function applyPendingUpdate(): Promise<void> {
 
   if (typeof window === 'undefined') return;
 
-  try {
-    if ('caches' in window) {
-      const keys = await caches.keys();
-      await Promise.all(
-        keys.filter((key) => key.startsWith('prismamd-')).map((key) => caches.delete(key)),
-      );
-    }
-  } catch {
-    // Ignore cache clear issues
-  }
-
   if ('serviceWorker' in navigator) {
     try {
       const reg = await navigator.serviceWorker.getRegistration();
+      if (!reg?.waiting) {
+        await reg?.update().catch(() => undefined);
+      }
       if (reg?.waiting) {
         let reloaded = false;
         const reloadOnce = () => {
@@ -273,7 +275,6 @@ export async function applyPendingUpdate(): Promise<void> {
         window.setTimeout(reloadOnce, 1200);
         return;
       }
-      await reg?.update().catch(() => undefined);
     } catch {
       // Fallback to direct reload below
     }

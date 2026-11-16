@@ -43,12 +43,39 @@ export default defineConfig({
     chunkSizeWarningLimit: 2500,
     rollupOptions: {
       output: {
-        manualChunks(id) {
-          if (id.includes('node_modules/mermaid') || id.includes('node_modules/cytoscape') || id.includes('node_modules/d3') || id.includes('node_modules/dagre')) {
-            return 'lazy-mermaid';
+        chunkFileNames(chunkInfo) {
+          if (
+            chunkInfo.name === 'index' ||
+            chunkInfo.name.startsWith('vendor-') ||
+            chunkInfo.name.startsWith('lazy-')
+          ) {
+            return 'assets/[name]-[hash].js';
           }
+          return 'assets/lazy-[name]-[hash].js';
+        },
+        manualChunks(id) {
           if (id.includes('node_modules/katex')) {
             return 'lazy-katex';
+          }
+          if (
+            id.includes('node_modules/cytoscape') ||
+            id.includes('node_modules/cose-base') ||
+            id.includes('node_modules/layout-base')
+          ) {
+            return 'lazy-mermaid-cytoscape';
+          }
+          if (id.includes('node_modules/elkjs')) {
+            return 'lazy-mermaid-elk';
+          }
+          if (id.includes('node_modules/dagre') || id.includes('node_modules/d3')) {
+            return 'lazy-mermaid-dagre';
+          }
+          if (
+            id.includes('node_modules/@mermaid-js/parser') ||
+            id.includes('node_modules/chevrotain') ||
+            id.includes('node_modules/langium')
+          ) {
+            return 'lazy-mermaid-parser';
           }
           if (id.includes('node_modules/@codemirror') || id.includes('node_modules/codemirror') || id.includes('node_modules/@lezer')) {
             return 'vendor-codemirror';

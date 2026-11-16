@@ -5,6 +5,7 @@
   "description": "Editor Markdown rápido y bidireccional (Raw + Vista Previa WYSIWYG + Mermaid + KaTeX) con Panel Lateral y Visor .md.",
   "permissions": [
     "storage",
+    "unlimitedStorage",
     "sidePanel",
     "contextMenus"
   ],
@@ -30,10 +31,14 @@
   "content_scripts": [
     {
       "matches": [
-        "file://*/*.md",
-        "file://*/*.markdown",
-        "*://*/*.md",
-        "*://*/*.markdown"
+        "file://*/*.md*",
+        "file://*/*.markdown*",
+        "file://*/*.mdown*",
+        "file://*/*.mdx*",
+        "*://*/*.md*",
+        "*://*/*.markdown*",
+        "*://*/*.mdown*",
+        "*://*/*.mdx*"
       ],
       "js": [
         "mdViewerContent.js"
