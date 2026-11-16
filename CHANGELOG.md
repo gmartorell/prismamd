@@ -8,6 +8,9 @@ El formato está basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1
 
 ## [Unreleased]
 
+### Añadido
+- Workflow de GitHub Actions ([deploy-pwa.yml](.github/workflows/deploy-pwa.yml)) para validar tipos, ejecutar tests y desplegar automáticamente `dist-pwa/` en GitHub Pages al hacer push a `main`.
+
 ## [2026.11.15.6] - 2026-11-15
 
 ### Añadido
