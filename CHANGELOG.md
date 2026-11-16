@@ -8,6 +8,11 @@ El formato está basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1
 
 ## [Unreleased]
 
+## [2026.11.16.2] - 2026-11-16
+
+### Corregido
+- Exportación a PDF / impresión y HTML autocontenido con fórmulas KaTeX ([exporter.ts](src/utils/exporter.ts)): resueltas e incrustadas las fuentes `.woff2` de KaTeX como Data URIs (`data:font/woff2;base64,...`) con `font-display: swap` y espera explícita a `document.fonts.ready` e imágenes antes de invocar `print()`, evitando fórmulas invisibles en la PWA instalada en Linux y Windows.
+
 ## [2026.11.16.1] - 2026-11-16
 
 ### Añadido

@@ -181,31 +181,134 @@ export async function renderMarkdownToStaticHtmlBody(markdown: string, theme: Th
   return await renderBlockNodes(doc.content, theme);
 }
 
-function collectKatexStyles(): string {
+export function resolveCssUrls(css: string, baseHref: string): string {
+  if (!baseHref) return css;
+  return css.replace(/url\(\s*(['"]?)([^'")]+)\1\s*\)/gi, (match, quote: string, rawUrl: string) => {
+    const trimmed = rawUrl.trim();
+    if (
+      !trimmed ||
+      trimmed.startsWith('data:') ||
+      trimmed.startsWith('blob:') ||
+      trimmed.startsWith('#') ||
+      /^https?:\/\//i.test(trimmed)
+    ) {
+      return match;
+    }
+    try {
+      const resolved = new URL(trimmed, baseHref).href;
+      return `url(${quote || '"'}${resolved}${quote || '"'})`;
+    } catch {
+      return match;
+    }
+  });
+}
+
+function arrayBufferToBase64(buffer: ArrayBuffer): string {
+  const bytes = new Uint8Array(buffer);
+  const chunkSize = 0x8000;
+  let binary = '';
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    const chunk = bytes.subarray(i, i + chunkSize);
+    binary += String.fromCharCode(...chunk);
+  }
+  return btoa(binary);
+}
+
+const fontDataUriCache = new Map<string, string>();
+
+async function fetchFontAsDataUri(url: string, mime: string): Promise<string | null> {
+  const cached = fontDataUriCache.get(url);
+  if (cached) return cached;
+  try {
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    const buffer = await res.arrayBuffer();
+    const dataUri = `data:${mime};base64,${arrayBufferToBase64(buffer)}`;
+    fontDataUriCache.set(url, dataUri);
+    return dataUri;
+  } catch {
+    return null;
+  }
+}
+
+async function inlineFontFaceBlocks(css: string, baseHref: string): Promise<string> {
+  const resolvedCss = resolveCssUrls(css, baseHref).replace(/font-display\s*:\s*block/gi, 'font-display: swap');
+  const fontFaceRegex = /@font-face\s*\{[^}]*\}/gi;
+  const matches = Array.from(resolvedCss.matchAll(fontFaceRegex));
+  if (matches.length === 0) return resolvedCss;
+
+  const replacements = await Promise.all(
+    matches.map(async (m) => {
+      const block = m[0];
+      const woff2Match = block.match(/url\(\s*(['"]?)([^'")\s]+\.woff2(?:\?[^'")\s]*)?)\1\s*\)/i);
+      const fallbackMatch =
+        woff2Match ?? block.match(/url\(\s*(['"]?)([^'")\s]+)\1\s*\)/i);
+      if (!fallbackMatch) return block;
+
+      const rawUrl = fallbackMatch[2].trim();
+      if (!rawUrl || rawUrl.startsWith('data:')) return block;
+
+      const isWoff2 = Boolean(woff2Match);
+      const mime = isWoff2
+        ? 'font/woff2'
+        : rawUrl.toLowerCase().includes('.woff')
+          ? 'font/woff'
+          : 'font/ttf';
+      const dataUri = await fetchFontAsDataUri(rawUrl, mime);
+      if (!dataUri) return block;
+
+      if (isWoff2) {
+        return block.replace(/src\s*:[^;]+;/i, `src: url("${dataUri}") format("woff2");`);
+      }
+      return block.replace(fallbackMatch[0], `url("${dataUri}")`);
+    }),
+  );
+
+  let out = '';
+  let lastIndex = 0;
+  matches.forEach((m, idx) => {
+    const start = m.index ?? 0;
+    out += resolvedCss.slice(lastIndex, start) + replacements[idx];
+    lastIndex = start + m[0].length;
+  });
+  out += resolvedCss.slice(lastIndex);
+  return out;
+}
+
+async function collectKatexStyles(): Promise<string> {
   if (typeof document === 'undefined') return '';
-  const sheets: string[] = [];
+  const fallbackBase = typeof window !== 'undefined' ? window.location.href : '';
+  const sheetTasks: Array<Promise<string>> = [];
+
   for (const sheet of Array.from(document.styleSheets)) {
     try {
       const rules = Array.from(sheet.cssRules ?? []);
       const css = rules.map((r) => r.cssText).join('\n');
       if (css.includes('.katex')) {
-        sheets.push(css);
+        const baseHref = sheet.href || fallbackBase;
+        sheetTasks.push(inlineFontFaceBlocks(css, baseHref));
       }
     } catch {
       // Cross-origin stylesheet skipped safely
     }
   }
-  return sheets.join('\n');
+
+  const parts = await Promise.all(sheetTasks);
+  return parts.join('\n');
 }
 
-function buildStandaloneHtmlDocument(title: string, bodyHtml: string, theme: ThemeMode): string {
+function buildStandaloneHtmlDocument(
+  title: string,
+  bodyHtml: string,
+  theme: ThemeMode,
+  katexCss: string,
+): string {
   const isDark = theme === 'dark';
   const isSepia = theme === 'sepia';
   const bg = isDark ? '#0f141b' : isSepia ? '#f7f1e3' : '#ffffff';
   const fg = isDark ? '#e6edf3' : isSepia ? '#3b2f24' : '#1f2328';
   const border = isDark ? '#30363d' : isSepia ? '#dccbb0' : '#d0d7de';
   const codeBg = isDark ? '#161b22' : isSepia ? '#efe6d5' : '#f6f8fa';
-  const katexCss = collectKatexStyles();
 
   return `<!DOCTYPE html>
 <html lang="es">
@@ -248,7 +351,8 @@ function buildStandaloneHtmlDocument(title: string, bodyHtml: string, theme: The
   .math-block { margin: 1.2em 0; text-align: center; overflow-x: auto; }
   @media print {
     body { background: #fff !important; color: #111 !important; padding: 0; }
-    pre, table, .mermaid-export, .github-alert { break-inside: avoid; }
+    pre, table, .mermaid-export, .github-alert, .math-block { break-inside: avoid; }
+    .math-block { overflow: visible; }
   }
   ${katexCss}
 </style>
@@ -265,7 +369,8 @@ export async function exportStandaloneHtml(
   theme: ThemeMode,
 ): Promise<void> {
   const body = await renderMarkdownToStaticHtmlBody(markdown, theme);
-  const fullHtml = buildStandaloneHtmlDocument(title, body, theme);
+  const katexCss = await collectKatexStyles();
+  const fullHtml = buildStandaloneHtmlDocument(title, body, theme, katexCss);
   const blob = new Blob([fullHtml], { type: 'text/html;charset=utf-8' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -278,34 +383,74 @@ export async function exportStandaloneHtml(
   window.setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
+async function waitForPrintDocumentReady(doc: Document, win: Window | null): Promise<void> {
+  if (doc.fonts?.ready) {
+    await Promise.race([
+      doc.fonts.ready,
+      new Promise<void>((resolve) => window.setTimeout(resolve, 3000)),
+    ]);
+  }
+
+  const images = Array.from(doc.images ?? []);
+  if (images.length > 0) {
+    await Promise.race([
+      Promise.all(
+        images.map((img) =>
+          img.complete
+            ? Promise.resolve()
+            : new Promise<void>((resolve) => {
+                img.addEventListener('load', () => resolve(), { once: true });
+                img.addEventListener('error', () => resolve(), { once: true });
+              }),
+        ),
+      ),
+      new Promise<void>((resolve) => window.setTimeout(resolve, 3000)),
+    ]);
+  }
+
+  await new Promise<void>((resolve) => {
+    const rafHost = win ?? window;
+    rafHost.requestAnimationFrame(() => rafHost.requestAnimationFrame(() => resolve()));
+  });
+}
+
 export async function exportPrintPdf(
   title: string,
   markdown: string,
   theme: ThemeMode,
 ): Promise<void> {
   const body = await renderMarkdownToStaticHtmlBody(markdown, theme === 'dark' ? 'light' : theme);
-  const fullHtml = buildStandaloneHtmlDocument(title, body, 'light');
+  const katexCss = await collectKatexStyles();
+  const fullHtml = buildStandaloneHtmlDocument(title, body, 'light', katexCss);
   const iframe = document.createElement('iframe');
   iframe.style.position = 'fixed';
-  iframe.style.right = '0';
-  iframe.style.bottom = '0';
-  iframe.style.width = '0';
-  iframe.style.height = '0';
+  iframe.style.left = '-9999px';
+  iframe.style.top = '0';
+  iframe.style.width = '860px';
+  iframe.style.height = '600px';
+  iframe.style.opacity = '0';
+  iframe.style.pointerEvents = 'none';
   iframe.style.border = '0';
   document.body.appendChild(iframe);
+
+  const cleanup = () => {
+    if (iframe.isConnected) {
+      iframe.remove();
+    }
+  };
 
   const doc = iframe.contentDocument;
   if (doc) {
     doc.open();
     doc.write(fullHtml);
     doc.close();
-    window.setTimeout(() => {
-      iframe.contentWindow?.focus();
-      iframe.contentWindow?.print();
-      window.setTimeout(() => iframe.remove(), 1500);
-    }, 150);
+    await waitForPrintDocumentReady(doc, iframe.contentWindow);
+    iframe.contentWindow?.addEventListener('afterprint', cleanup, { once: true });
+    iframe.contentWindow?.focus();
+    iframe.contentWindow?.print();
+    window.setTimeout(cleanup, 60000);
   } else {
-    iframe.remove();
+    cleanup();
   }
 }
 

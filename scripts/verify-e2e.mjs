@@ -174,6 +174,53 @@ async function run() {
     await page.keyboard.press('Escape');
     await page.waitForTimeout(100);
 
+    // Regression: Export PDF embeds KaTeX woff2 Data URIs and waits for fonts before print()
+    await page.evaluate(() => {
+      const origCreate = document.createElement.bind(document);
+      window.__pdfPrintResult = null;
+      document.createElement = function (tag, opts) {
+        const el = origCreate(tag, opts);
+        if (String(tag).toLowerCase() === 'iframe') {
+          const observer = new MutationObserver(() => {
+            if (el.isConnected && el.contentDocument && el.contentWindow) {
+              const doc = el.contentDocument;
+              const win = el.contentWindow;
+              win.print = () => {
+                const fonts = Array.from(doc.fonts || []).map((f) => ({ family: f.family, status: f.status }));
+                const katexBoxes = Array.from(doc.querySelectorAll('.katex')).map((k) => {
+                  const r = k.getBoundingClientRect();
+                  return { w: Math.round(r.width), h: Math.round(r.height) };
+                });
+                const html = doc.documentElement.outerHTML;
+                window.__pdfPrintResult = {
+                  loadedKatexFonts: fonts.filter((f) => f.family.startsWith('KaTeX') && f.status === 'loaded').length,
+                  katexBoxes,
+                  hasDataWoff2: html.includes('data:font/woff2;base64,'),
+                  hasBrokenRelFont: html.includes('./KaTeX_'),
+                };
+              };
+              observer.disconnect();
+            }
+          });
+          observer.observe(document.body, { childList: true });
+        }
+        return el;
+      };
+    });
+    await page.locator('[data-testid="export-menu-btn"]').click();
+    await page.locator('.dropdown-menu .dropdown-item').nth(1).click();
+    await page.waitForFunction(() => Boolean(window.__pdfPrintResult), {
+      timeout: 10000,
+    });
+    const pdfResult = await page.evaluate(() => window.__pdfPrintResult);
+    assert(pdfResult.hasDataWoff2, 'PDF print document should embed KaTeX woff2 Data URIs');
+    assert(!pdfResult.hasBrokenRelFont, 'PDF print document must not retain unresolved ./KaTeX_ URLs');
+    assert(pdfResult.loadedKatexFonts > 0, `Expected loaded KaTeX fonts in print iframe, got ${pdfResult.loadedKatexFonts}`);
+    assert(
+      pdfResult.katexBoxes.length >= 2 && pdfResult.katexBoxes.every((b) => b.w > 10 && b.h > 8),
+      `Expected visible KaTeX formulas in print iframe, got ${JSON.stringify(pdfResult.katexBoxes)}`,
+    );
+
     assert(pageErrors.length === 0, `Page errors detected: ${pageErrors.join(' | ')}`);
     assert(consoleErrors.length === 0, `Console errors detected: ${consoleErrors.join(' | ')}`);
 
