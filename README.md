@@ -77,3 +77,11 @@ npm run test       # Tests unitarios (puente AST, plegado Base64, paridad i18n)
 npm run typecheck  # Comprobación estricta de tipos TypeScript
 npm run build      # Compila dist-pwa/, dist-extension/ y dist-extension.zip
 ```
+
+---
+
+## Licencia
+
+Distribuido bajo licencia **MIT** — consulta el archivo [LICENSE](LICENSE) para más detalles.
+
+Copyright © 2026 **Guillem Martorell Nicolau**. Cualquier copia, redistribución o trabajo derivado debe conservar el aviso de copyright y citar al autor original.

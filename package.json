@@ -2,6 +2,13 @@
   "name": "prismamd",
   "version": "2026.11.15-6",
   "private": true,
+  "license": "MIT",
+  "author": "Guillem Martorell Nicolau",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/gmartorell/prismamd.git"
+  },
+  "homepage": "https://github.com/gmartorell/prismamd#readme",
   "type": "module",
   "description": "Fast multiplatform bidirectional Markdown editor (Chromium MV3 Extension + Offline PWA)",
   "scripts": {
