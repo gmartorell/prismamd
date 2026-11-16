@@ -17,6 +17,8 @@ export interface TranslationDictionary {
     rawShort: string;
     splitShort: string;
     previewShort: string;
+    viewModeAria: string;
+    splitResizeAria: string;
   };
   files: {
     newNote: string;
@@ -47,6 +49,20 @@ export interface TranslationDictionary {
     saveErrorToast: string;
     openErrorToast: string;
     folderErrorToast: string;
+    fileAlreadyExists: string;
+    invalidFileName: string;
+    readOnlyBadge: string;
+    readOnlyFallbackSaveAs: string;
+    reloadedExternalToast: string;
+    diskConflictTitle: string;
+    diskConflictDesc: string;
+    reloadFromDisk: string;
+    overwriteDisk: string;
+    saveAsCopy: string;
+    defaultDocFilename: string;
+    defaultQuickNoteFilename: string;
+    defaultNewNoteName: string;
+    imageLoadErrorToast: string;
   };
   sidebars: {
     explorer: string;
@@ -84,6 +100,10 @@ export interface TranslationDictionary {
     commandPalette: string;
     formatHint: string;
     installApp: string;
+    linkInputPlaceholder: string;
+    confirmOk: string;
+    defaultLinkText: string;
+    defaultImageAlt: string;
   };
   slash: {
     title: string;
@@ -134,6 +154,10 @@ export interface TranslationDictionary {
     cancel: string;
     rawHtmlTitle: string;
     placeholderEditor: string;
+    codeLanguageAuto: string;
+    codeLanguageAria: string;
+    copyCode: string;
+    codeCopied: string;
     alerts: Record<GithubAlertKind, string>;
   };
   base64: {

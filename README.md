@@ -21,7 +21,7 @@ Editor de archivos Markdown multiplataforma, ultrarrápido y 100% local (sin ser
   - Pegar (`Ctrl+V`) o arrastrar imágenes las incrusta como **Base64 / Data URI** en el propio `.md`.
   - **Pestañas + Nota rápida (Scratchpad) + Explorador lateral de carpeta + Índice (Outline)** colapsables.
 - **Apariencia, productividad y exportación**:
-  - Temas **Claro**, **Oscuro** y **Sepia**, **Modo Zen (`Ctrl+Shift+Z`)**, **Paleta de comandos (`Ctrl+Shift+P`)**.
+  - Temas **Claro**, **Oscuro** y **Sepia**, **Modo Zen (`Alt+Z`)**, **Paleta de comandos (`Ctrl+Shift+P`)**.
   - Exportar a **HTML autocontenido**, **PDF / Impresión limpia** y **Copiar como texto enriquecido**.
   - **i18n extensible**: Español (`es`) e Inglés (`en`) incluidos de serie.
 
@@ -55,7 +55,7 @@ Incluye además **Side Panel** lateral (clic derecho en cualquier página → *"
 | Guardar en disco / Guardar como | `Ctrl+S` / `Ctrl+Shift+S` |
 | Abrir archivo `.md` | `Ctrl+O` |
 | Paleta de comandos | `Ctrl+Shift+P` |
-| Modo Zen sin distracciones | `Ctrl+Shift+Z` |
+| Modo Zen sin distracciones | `Alt+Z` |
 | Buscar y reemplazar (en Raw) | `Ctrl+F` / `Ctrl+H` |
 | Insertar bloque (en Vista Humana) | `/` |
 

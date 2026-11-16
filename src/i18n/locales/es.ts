@@ -9,6 +9,8 @@ export const esDict: TranslationDictionary = {
     rawShort: 'Raw',
     splitShort: 'Dividida',
     previewShort: 'Previa',
+    viewModeAria: 'Modo de vista',
+    splitResizeAria: 'Redimensionar paneles (doble clic para restablecer)',
   },
   files: {
     newNote: 'Nueva nota',
@@ -39,6 +41,20 @@ export const esDict: TranslationDictionary = {
     saveErrorToast: 'No se pudo guardar el archivo.',
     openErrorToast: 'No se pudo abrir el archivo.',
     folderErrorToast: 'No se pudo leer la carpeta seleccionada.',
+    fileAlreadyExists: 'Ya existe un archivo llamado {name} en esta carpeta',
+    invalidFileName: 'Nombre de archivo no válido',
+    readOnlyBadge: 'SL',
+    readOnlyFallbackSaveAs: 'Archivo de solo lectura: guardando una copia nueva',
+    reloadedExternalToast: 'Recargado desde disco: {name}',
+    diskConflictTitle: 'El archivo cambió fuera de PrismaMD',
+    diskConflictDesc: '«{name}» fue modificado externamente y tienes cambios locales sin guardar.',
+    reloadFromDisk: 'Recargar desde disco',
+    overwriteDisk: 'Sobrescribir disco',
+    saveAsCopy: 'Guardar como copia…',
+    defaultDocFilename: 'documento',
+    defaultQuickNoteFilename: 'nota-rapida.md',
+    defaultNewNoteName: 'nueva-nota.md',
+    imageLoadErrorToast: 'No se pudo procesar la imagen',
   },
   sidebars: {
     explorer: 'Archivos',
@@ -71,11 +87,15 @@ export const esDict: TranslationDictionary = {
     horizontalRule: 'Separador horizontal',
     insertImage: 'Insertar imagen (Base64)',
     search: 'Buscar y reemplazar (Ctrl+F)',
-    zenMode: 'Modo Zen (Ctrl+Shift+Z)',
+    zenMode: 'Modo Zen (Alt+Z)',
     exitZen: 'Salir de Modo Zen',
     commandPalette: 'Paleta de comandos (Ctrl+Shift+P)',
     formatHint: 'Escribe / para insertar bloques',
     installApp: 'Instalar app',
+    linkInputPlaceholder: 'https://...',
+    confirmOk: 'Aceptar',
+    defaultLinkText: 'enlace',
+    defaultImageAlt: 'imagen',
   },
   slash: {
     title: 'Insertar bloque',
@@ -126,6 +146,10 @@ export const esDict: TranslationDictionary = {
     cancel: 'Cancelar',
     rawHtmlTitle: 'HTML directo',
     placeholderEditor: 'Empieza a escribir o pulsa / para insertar bloques…',
+    codeLanguageAuto: 'Texto plano',
+    codeLanguageAria: 'Lenguaje del bloque de código',
+    copyCode: 'Copiar',
+    codeCopied: 'Copiado',
     alerts: {
       NOTE: 'Nota',
       TIP: 'Consejo',
@@ -221,7 +245,7 @@ Edita **directamente en cualquiera de las dos vistas**: todo lo que escribas en 
 | :--- | :---: | ---: |
 | Cambiar de vista | \`Ctrl+1 / 2 / 3\` | Listo |
 | Paleta de comandos | \`Ctrl+Shift+P\` | Activo |
-| Modo Zen sin distracciones | \`Ctrl+Shift+Z\` | Activo |
+| Modo Zen sin distracciones | \`Alt+Z\` | Activo |
 
 ## Diagramas Mermaid en vivo
 

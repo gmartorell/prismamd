@@ -9,6 +9,8 @@ export const enDict: TranslationDictionary = {
     rawShort: 'Raw',
     splitShort: 'Split',
     previewShort: 'Preview',
+    viewModeAria: 'View mode',
+    splitResizeAria: 'Resize split panes (double-click to reset)',
   },
   files: {
     newNote: 'New note',
@@ -39,6 +41,20 @@ export const enDict: TranslationDictionary = {
     saveErrorToast: 'Could not save the file.',
     openErrorToast: 'Could not open the file.',
     folderErrorToast: 'Could not read the selected folder.',
+    fileAlreadyExists: 'A file named {name} already exists in this folder',
+    invalidFileName: 'Invalid file name',
+    readOnlyBadge: 'RO',
+    readOnlyFallbackSaveAs: 'Read-only file: saving as a new copy',
+    reloadedExternalToast: 'Reloaded from disk: {name}',
+    diskConflictTitle: 'File changed on disk',
+    diskConflictDesc: '"{name}" was modified externally while you have unsaved local changes.',
+    reloadFromDisk: 'Reload from disk',
+    overwriteDisk: 'Overwrite disk',
+    saveAsCopy: 'Save as copy…',
+    defaultDocFilename: 'document',
+    defaultQuickNoteFilename: 'quick-note.md',
+    defaultNewNoteName: 'new-note.md',
+    imageLoadErrorToast: 'Could not process image',
   },
   sidebars: {
     explorer: 'Files',
@@ -71,11 +87,15 @@ export const enDict: TranslationDictionary = {
     horizontalRule: 'Horizontal divider',
     insertImage: 'Insert image (Base64)',
     search: 'Find & Replace (Ctrl+F)',
-    zenMode: 'Zen Mode (Ctrl+Shift+Z)',
+    zenMode: 'Zen Mode (Alt+Z)',
     exitZen: 'Exit Zen Mode',
     commandPalette: 'Command Palette (Ctrl+Shift+P)',
     formatHint: 'Type / to insert blocks',
     installApp: 'Install app',
+    linkInputPlaceholder: 'https://...',
+    confirmOk: 'OK',
+    defaultLinkText: 'link',
+    defaultImageAlt: 'image',
   },
   slash: {
     title: 'Insert block',
@@ -126,6 +146,10 @@ export const enDict: TranslationDictionary = {
     cancel: 'Cancel',
     rawHtmlTitle: 'Raw HTML',
     placeholderEditor: 'Start writing or type / to insert blocks…',
+    codeLanguageAuto: 'Plain text',
+    codeLanguageAria: 'Code block language',
+    copyCode: 'Copy',
+    codeCopied: 'Copied',
     alerts: {
       NOTE: 'Note',
       TIP: 'Tip',
@@ -221,7 +245,7 @@ Edit **directly in either pane**: everything you type in **Raw** or **Preview** 
 | :--- | :---: | ---: |
 | Switch view mode | \`Ctrl+1 / 2 / 3\` | Ready |
 | Command palette | \`Ctrl+Shift+P\` | Active |
-| Distraction-free Zen | \`Ctrl+Shift+Z\` | Active |
+| Distraction-free Zen | \`Alt+Z\` | Active |
 
 ## Live Mermaid Diagrams
 
