@@ -8,6 +8,8 @@ El formato está basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1
 
 ## [Unreleased]
 
+## [2026.11.16.3] - 2026-11-16
+
 ### Añadido
 - Sanitizador HTML offline basado en `DOMParser` (`src/utils/htmlSanitizer.ts`) con lista blanca de etiquetas y esquemas URL seguros (`http(s):`, `mailto:`, `#`, rutas relativas y `data:image/*;base64,...`), más política CSP estricta (`default-src 'none'`) en documentos HTML exportados e impresión PDF.
 - Cabecera interactiva en bloques de código de **Vista Previa** (`PreviewEditor.tsx`, `app.css`) con selector de lenguaje (`lowlight`), botón de copiado rápido y resaltado sintáctico `.hljs-*` adaptado a los temas **Claro**, **Oscuro** y **Sepia**.
