@@ -29,7 +29,7 @@ export function TabBar({ tabs, activeTabId, onSelectTab, onCloseTab, onNewTab }:
       <div className="tab-list" role="tablist">
         {tabs.map((tab, index) => {
           const isActive = tab.id === activeTabId;
-          const isDirty = tab.content !== tab.savedContent && !tab.isScratchpad;
+          const isDirty = tab.content !== tab.savedContent;
           const label = tab.isScratchpad ? t.files.scratchpad : tab.title;
           const closeLabel = t.files.closeTab.includes('{name}')
             ? formatMessage(t.files.closeTab, { name: label })
@@ -42,7 +42,7 @@ export function TabBar({ tabs, activeTabId, onSelectTab, onCloseTab, onNewTab }:
               className={`tab-item ${isActive ? 'active' : ''} ${tab.isScratchpad ? 'scratchpad' : ''}`}
               onClick={() => onSelectTab(tab.id)}
               onMouseDown={(e) => {
-                if (e.button === 1 && !tab.isScratchpad) {
+                if (e.button === 1) {
                   e.preventDefault();
                   onCloseTab(tab.id);
                 }
@@ -75,7 +75,7 @@ export function TabBar({ tabs, activeTabId, onSelectTab, onCloseTab, onNewTab }:
                   } else if (e.key === 'End') {
                     e.preventDefault();
                     moveFocusToTab(tabs.length - 1);
-                  } else if (e.key === 'Delete' && !tab.isScratchpad) {
+                  } else if (e.key === 'Delete') {
                     e.preventDefault();
                     onCloseTab(tab.id);
                   }
@@ -85,20 +85,18 @@ export function TabBar({ tabs, activeTabId, onSelectTab, onCloseTab, onNewTab }:
                 <span className="tab-title">{label}</span>
                 {isDirty && <span className="tab-dirty-dot" title={t.files.unsavedDot} />}
               </button>
-              {!tab.isScratchpad && (
-                <button
-                  type="button"
-                  className="tab-close-btn"
-                  aria-label={closeLabel}
-                  title={closeLabel}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onCloseTab(tab.id);
-                  }}
-                >
-                  <X size={12} />
-                </button>
-              )}
+              <button
+                type="button"
+                className="tab-close-btn"
+                aria-label={closeLabel}
+                title={closeLabel}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onCloseTab(tab.id);
+                }}
+              >
+                <X size={12} />
+              </button>
             </div>
           );
         })}

@@ -248,6 +248,20 @@ async function run() {
       `Expected visible KaTeX formulas in print iframe, got ${JSON.stringify(pdfResult.katexBoxes)}`,
     );
 
+    // Regression: Scratchpad ("Nota rápida") can be closed and replaced by a blank untitled tab
+    page.once('dialog', async (dialog) => {
+      await dialog.accept();
+    });
+    await page.locator('.tab-item.scratchpad .tab-close-btn').click();
+    await page.waitForTimeout(200);
+    const scratchpadCountAfterClose = await page.locator('.tab-item.scratchpad').count();
+    const normalTabTitleAfterClose = await page.locator('.tab-item .tab-title').first().innerText();
+    assert(scratchpadCountAfterClose === 0, 'Scratchpad tab should close when close button is clicked');
+    assert(
+      normalTabTitleAfterClose.trim().length > 0 && !normalTabTitleAfterClose.includes('Nota rápida'),
+      `Expected fallback blank untitled tab after closing Scratchpad, got '${normalTabTitleAfterClose}'`,
+    );
+
     assert(pageErrors.length === 0, `Page errors detected: ${pageErrors.join(' | ')}`);
     assert(consoleErrors.length === 0, `Console errors detected: ${consoleErrors.join(' | ')}`);
 

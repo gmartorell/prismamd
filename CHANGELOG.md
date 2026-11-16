@@ -8,6 +8,11 @@ El formato está basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1
 
 ## [Unreleased]
 
+## [2026.11.16.4] - 2026-11-16
+
+### Cambiado
+- Permitido cerrar la pestaña **Nota rápida** (`Scratchpad`) mediante el botón `×`, clic central o tecla `Delete` ([TabBar.tsx](src/components/TabBar.tsx), [AppShell.tsx](src/components/AppShell.tsx)), mostrando su indicador de cambios sin guardar, abriendo una pestaña en blanco si era la última abierta, evitando reabrirla automáticamente al recargar, sustituyéndola por la pestaña del archivo al guardar con `Ctrl+S` y permitiendo reabrirla desde la Paleta de comandos o el menú contextual.
+
 ## [2026.11.16.3] - 2026-11-16
 
 ### Añadido

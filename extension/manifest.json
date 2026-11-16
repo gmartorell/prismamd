@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "PrismaMD — Fast Markdown Editor",
-  "version": "2026.11.16.3",
+  "version": "2026.11.16.4",
   "description": "Editor Markdown rápido y bidireccional (Raw + Vista Previa WYSIWYG + Mermaid + KaTeX) con Panel Lateral y Visor .md.",
   "permissions": [
     "storage",

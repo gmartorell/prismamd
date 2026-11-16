@@ -733,19 +733,19 @@ export function AppShell() {
             };
           });
 
-          if (!restoredTabs.some((tb) => tb.isScratchpad)) {
-            restoredTabs.unshift({
-              id: 'scratchpad',
-              title: tRef.current.files.scratchpad,
-              content: tRef.current.demoMarkdown,
-              savedContent: tRef.current.demoMarkdown,
-              isScratchpad: true,
-            });
-          }
           if (pendingAppend) {
+            const quoted = `> ${pendingAppend.replace(/\n/g, '\n> ')}\n`;
             const sp = restoredTabs.find((tb) => tb.isScratchpad);
             if (sp) {
-              sp.content = `${sp.content.trimEnd()}\n\n> ${pendingAppend.replace(/\n/g, '\n> ')}\n`;
+              sp.content = `${sp.content.trimEnd()}\n\n${quoted}`;
+            } else {
+              restoredTabs.unshift({
+                id: 'scratchpad',
+                title: tRef.current.files.scratchpad,
+                content: quoted,
+                savedContent: '',
+                isScratchpad: true,
+              });
             }
           }
 
@@ -870,14 +870,27 @@ export function AppShell() {
       if (changes.prismamd_scratchpad_append?.newValue) {
         void consumePendingScratchpadAppend().then((text) => {
           if (text) {
+            const quoted = `> ${text.replace(/\n/g, '\n> ')}\n`;
             lastEditSourceRef.current = 'external';
-            const nextTabs = commitTabs((prev) =>
-              prev.map((tb) =>
-                tb.isScratchpad
-                  ? { ...tb, content: `${tb.content.trimEnd()}\n\n> ${text.replace(/\n/g, '\n> ')}\n` }
-                  : tb,
-              ),
-            );
+            const nextTabs = commitTabs((prev) => {
+              if (prev.some((tb) => tb.isScratchpad)) {
+                return prev.map((tb) =>
+                  tb.isScratchpad
+                    ? { ...tb, content: `${tb.content.trimEnd()}\n\n${quoted}` }
+                    : tb,
+                );
+              }
+              return [
+                {
+                  id: 'scratchpad',
+                  title: tRef.current.files.scratchpad,
+                  content: quoted,
+                  savedContent: '',
+                  isScratchpad: true,
+                },
+                ...prev,
+              ];
+            });
             broadcastTabsNow(nextTabs);
             setActiveTabId('scratchpad');
           }
@@ -1041,11 +1054,12 @@ export function AppShell() {
   const handleCloseTab = useCallback(
     (tabId: string) => {
       const target = latestTabsRef.current.find((tb) => tb.id === tabId);
-      if (!target || target.isScratchpad) return;
+      if (!target) return;
       const isDirty = target.content !== target.savedContent;
       if (isDirty) {
+        const displayName = target.isScratchpad ? t.files.scratchpad : target.title;
         const confirmed = window.confirm(
-          formatMessage(t.files.confirmCloseUnsaved, { name: target.title }),
+          formatMessage(t.files.confirmCloseUnsaved, { name: displayName }),
         );
         if (!confirmed) return;
       }
@@ -1059,16 +1073,36 @@ export function AppShell() {
       }
       const nextTabs = commitTabs((prev) => {
         const idx = prev.findIndex((tb) => tb.id === tabId);
-        const next = prev.filter((tb) => tb.id !== tabId);
+        const filtered = prev.filter((tb) => tb.id !== tabId);
+        if (filtered.length === 0) {
+          const replacement: EditorTab = {
+            id: createTabId(),
+            title: t.files.untitled,
+            content: '',
+            savedContent: '',
+            isScratchpad: false,
+          };
+          tabCursorsRef.current[replacement.id] = { line: 1, col: 1 };
+          setActiveTabId(replacement.id);
+          return [replacement];
+        }
         if (activeTabId === tabId) {
-          const fallback = next[Math.max(0, idx - 1)] ?? next[0];
+          const fallback = filtered[Math.max(0, idx - 1)] ?? filtered[0];
           if (fallback) setActiveTabId(fallback.id);
         }
-        return next;
+        return filtered;
       });
       broadcastTabsNow(nextTabs);
     },
-    [activeTabId, broadcastTabsNow, commitTabs, conflictTab?.tabId, t.files.confirmCloseUnsaved],
+    [
+      activeTabId,
+      broadcastTabsNow,
+      commitTabs,
+      conflictTab?.tabId,
+      t.files.confirmCloseUnsaved,
+      t.files.scratchpad,
+      t.files.untitled,
+    ],
   );
 
   const handleOpenFile = useCallback(async () => {
@@ -1276,48 +1310,40 @@ export function AppShell() {
           const promotedId = matchedExistingId ?? createTabId();
           const savedText = freshTab.content;
           tabCursorsRef.current[promotedId] = { ...(tabCursorsRef.current.scratchpad ?? { line: 1, col: 1 }) };
-          tabCursorsRef.current.scratchpad = { line: 1, col: 1 };
+          delete tabCursorsRef.current.scratchpad;
           lastEditSourceRef.current = 'external';
 
           const nextTabs = commitTabs((prev) => {
-            const updated = prev.map((tb) => {
-              if (tb.isScratchpad) {
-                return {
-                  id: 'scratchpad',
-                  title: t.files.scratchpad,
-                  content: t.demoMarkdown,
-                  savedContent: t.demoMarkdown,
-                  isScratchpad: true,
-                  fileHandle: undefined,
-                  relativePath: undefined,
-                  diskLastModified: undefined,
-                };
-              }
-              if (matchedExistingId && tb.id === matchedExistingId) {
-                return {
-                  ...tb,
-                  title: res.title,
-                  content: savedText,
-                  savedContent: savedText,
-                  fileHandle: res.fileHandle,
-                  diskLastModified: res.lastModified,
-                };
-              }
-              return tb;
-            });
-
-            if (!matchedExistingId) {
-              updated.push({
-                id: promotedId,
-                title: res.title,
-                content: savedText,
-                savedContent: savedText,
-                isScratchpad: false,
-                fileHandle: res.fileHandle,
-                diskLastModified: res.lastModified,
-              });
+            if (matchedExistingId) {
+              return prev
+                .filter((tb) => !tb.isScratchpad)
+                .map((tb) =>
+                  tb.id === matchedExistingId
+                    ? {
+                        ...tb,
+                        title: res.title,
+                        content: savedText,
+                        savedContent: savedText,
+                        fileHandle: res.fileHandle,
+                        diskLastModified: res.lastModified,
+                      }
+                    : tb,
+                );
             }
-            return updated;
+
+            return prev.map((tb) =>
+              tb.isScratchpad
+                ? {
+                    id: promotedId,
+                    title: res.title,
+                    content: savedText,
+                    savedContent: savedText,
+                    isScratchpad: false,
+                    fileHandle: res.fileHandle,
+                    diskLastModified: res.lastModified,
+                  }
+                : tb,
+            );
           });
 
           broadcastTabsNow(nextTabs);
@@ -1822,6 +1848,30 @@ export function AppShell() {
       },
 
       { id: 'file-new', category: t.palette.categories.file, title: t.files.newNote, run: handleNewTab },
+      {
+        id: 'file-scratchpad',
+        category: t.palette.categories.file,
+        title: t.files.scratchpad,
+        run: () => {
+          const existing = latestTabsRef.current.find((tb) => tb.isScratchpad);
+          if (existing) {
+            setActiveTabId(existing.id);
+            return;
+          }
+          const scratchTab: EditorTab = {
+            id: 'scratchpad',
+            title: t.files.scratchpad,
+            content: t.demoMarkdown,
+            savedContent: t.demoMarkdown,
+            isScratchpad: true,
+          };
+          tabCursorsRef.current.scratchpad = { line: 1, col: 1 };
+          lastEditSourceRef.current = 'external';
+          const nextTabs = commitTabs((prev) => [scratchTab, ...prev]);
+          broadcastTabsNow(nextTabs);
+          setActiveTabId('scratchpad');
+        },
+      },
       { id: 'file-open', category: t.palette.categories.file, title: t.files.openFile, shortcut: 'Ctrl+O', run: () => void handleOpenFile() },
       { id: 'file-folder', category: t.palette.categories.file, title: t.files.openFolder, run: () => void handleOpenFolder() },
       { id: 'file-save', category: t.palette.categories.file, title: t.files.save, shortcut: 'Ctrl+S', run: () => void handleSave(false) },
@@ -1875,7 +1925,7 @@ export function AppShell() {
     handleCheckUpdates,
   ]);
 
-  const isDirty = activeTab.content !== activeTab.savedContent && !activeTab.isScratchpad;
+  const isDirty = activeTab.content !== activeTab.savedContent;
 
   const handleWindowDrop = async (e: DragEvent) => {
     const alreadyHandledByEditor = e.defaultPrevented;
