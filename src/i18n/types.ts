@@ -1,0 +1,205 @@
+export type LocaleCode = 'es' | 'en' | (string & {});
+
+export interface LocaleMeta {
+  code: string;
+  nativeName: string;
+  dir: 'ltr' | 'rtl';
+}
+
+export type GithubAlertKind = 'NOTE' | 'TIP' | 'IMPORTANT' | 'WARNING' | 'CAUTION';
+
+export interface TranslationDictionary {
+  appName: string;
+  views: {
+    raw: string;
+    split: string;
+    preview: string;
+    rawShort: string;
+    splitShort: string;
+    previewShort: string;
+  };
+  files: {
+    newNote: string;
+    openFile: string;
+    openFolder: string;
+    save: string;
+    saveAs: string;
+    scratchpad: string;
+    untitled: string;
+    closeTab: string;
+    unsavedDot: string;
+    confirmCloseUnsaved: string;
+    reconnectFolder: string;
+    reconnectFolderAction: string;
+    noFolderOpen: string;
+    openFolderHint: string;
+    filterFiles: string;
+    newFileInFolder: string;
+    newFilePlaceholder: string;
+    emptyFolder: string;
+    emptySubfolder: string;
+    loadingFolder: string;
+    readOnlyFolder: string;
+    refreshFolder: string;
+    closeFolder: string;
+    importedFromViewer: string;
+    savedToast: string;
+    saveErrorToast: string;
+    openErrorToast: string;
+    folderErrorToast: string;
+  };
+  sidebars: {
+    explorer: string;
+    outline: string;
+    noHeadings: string;
+    toggleExplorer: string;
+    toggleOutline: string;
+    expandToTab: string;
+  };
+  toolbar: {
+    bold: string;
+    italic: string;
+    strike: string;
+    inlineCode: string;
+    link: string;
+    linkPrompt: string;
+    heading1: string;
+    heading2: string;
+    heading3: string;
+    bulletList: string;
+    orderedList: string;
+    taskList: string;
+    quote: string;
+    codeBlock: string;
+    table: string;
+    mermaid: string;
+    mathInline: string;
+    mathBlock: string;
+    alert: string;
+    horizontalRule: string;
+    insertImage: string;
+    search: string;
+    zenMode: string;
+    exitZen: string;
+    commandPalette: string;
+    formatHint: string;
+    installApp: string;
+  };
+  slash: {
+    title: string;
+    empty: string;
+    items: {
+      h1: { title: string; desc: string };
+      h2: { title: string; desc: string };
+      h3: { title: string; desc: string };
+      bulletList: { title: string; desc: string };
+      orderedList: { title: string; desc: string };
+      taskList: { title: string; desc: string };
+      table: { title: string; desc: string };
+      codeBlock: { title: string; desc: string };
+      mermaid: { title: string; desc: string };
+      mathBlock: { title: string; desc: string };
+      mathInline: { title: string; desc: string };
+      alertNote: { title: string; desc: string };
+      alertWarning: { title: string; desc: string };
+      quote: { title: string; desc: string };
+      divider: { title: string; desc: string };
+      image: { title: string; desc: string };
+    };
+  };
+  table: {
+    addRowAbove: string;
+    addRowBelow: string;
+    deleteRow: string;
+    addColLeft: string;
+    addColRight: string;
+    deleteCol: string;
+    alignLeft: string;
+    alignCenter: string;
+    alignRight: string;
+    deleteTable: string;
+  };
+  blocks: {
+    frontmatterTitle: string;
+    frontmatterPlaceholder: string;
+    mermaidTitle: string;
+    editCode: string;
+    preview: string;
+    mermaidError: string;
+    mermaidEmpty: string;
+    mathInlineTitle: string;
+    mathBlockTitle: string;
+    latexPlaceholder: string;
+    apply: string;
+    cancel: string;
+    rawHtmlTitle: string;
+    placeholderEditor: string;
+    alerts: Record<GithubAlertKind, string>;
+  };
+  base64: {
+    expand: string;
+    collapse: string;
+    imageLabel: string;
+  };
+  themes: {
+    label: string;
+    light: string;
+    dark: string;
+    sepia: string;
+  };
+  language: {
+    label: string;
+  };
+  exportMenu: {
+    label: string;
+    exportHtml: string;
+    exportPdf: string;
+    copyRichText: string;
+    copiedRichText: string;
+    exportedHtml: string;
+    copyError: string;
+  };
+  palette: {
+    placeholder: string;
+    noResults: string;
+    categories: {
+      view: string;
+      file: string;
+      format: string;
+      theme: string;
+      export: string;
+      language: string;
+    };
+  };
+  status: {
+    words: string;
+    chars: string;
+    minRead: string;
+    lineCol: string;
+    saved: string;
+    modified: string;
+    draft: string;
+    scrollSyncOn: string;
+    scrollSyncOff: string;
+  };
+  about: {
+    versionLabel: string;
+    menuCommand: string;
+    title: string;
+    currentVersion: string;
+    latestVersion: string;
+    channelLabel: string;
+    channelPwa: string;
+    channelExtension: string;
+    checkUpdates: string;
+    checkingUpdates: string;
+    upToDate: string;
+    updateAvailable: string;
+    updateAvailableShort: string;
+    applyUpdate: string;
+    offlineStatus: string;
+    managedByStore: string;
+    close: string;
+  };
+  demoMarkdown: string;
+}

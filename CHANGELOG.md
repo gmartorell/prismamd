@@ -1,0 +1,69 @@
+# Changelog
+
+Todos los cambios relevantes de **PrismaMD** se documentarán en este archivo.
+
+El formato está basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/), y el versionado sigue el esquema **`año.mes.dia.versiondiaria`** (por ejemplo `2026.11.15.1`, reiniciando `versiondiaria` en `1` cada nuevo día y usando enteros sin ceros a la izquierda para compatibilidad con Chromium Manifest V3).
+
+> Para publicar automáticamente los cambios acumulados en `[Unreleased]` a una nueva versión, ejecuta `npm run release`.
+
+## [Unreleased]
+
+## [2026.11.15.6] - 2026-11-15
+
+### Añadido
+- Indicador visible de versión (`v<año.mes.dia.versiondiaria>`) en [StatusBar.tsx](file:///projects/antigravity/mdeditor/src/components/StatusBar.tsx) y entrada en la Paleta de comandos para abrir el diálogo [VersionModal.tsx](file:///projects/antigravity/mdeditor/src/components/VersionModal.tsx) de versión instalada y comprobación de actualizaciones.
+- Detector local de actualizaciones en [version.ts](file:///projects/antigravity/mdeditor/src/utils/version.ts) (vía Service Worker `SKIP_WAITING` + limpieza de caché obsoleta y [version.json](file:///projects/antigravity/mdeditor/scripts/finalize-pwa.mjs) en el mismo origen para PWA, o `chrome.runtime.requestUpdateCheck` en la extensión Chrome MV3), verificando que la versión remota sea estrictamente superior antes de mostrar aviso de actualización y usando *Network-First* con respaldo offline en navegaciones de [sw.js](file:///projects/antigravity/mdeditor/pwa/sw.js).
+
+### Cambiado
+- Diseño responsive adaptado a móvil y tablet en [app.css](file:///projects/antigravity/mdeditor/src/styles/app.css), [AppShell.tsx](file:///projects/antigravity/mdeditor/src/components/AppShell.tsx), [TopToolbar.tsx](file:///projects/antigravity/mdeditor/src/components/TopToolbar.tsx) y [index.html](file:///projects/antigravity/mdeditor/index.html): barra superior en 2 filas sin solapamientos ni cortes (tira de formato desplazable horizontalmente), vista inicial en **Vista Previa** a ancho completo en pantallas `<= 768 px`, paneles laterales de Explorador/Índice convertidos en drawers deslizantes con cierre automático al seleccionar, modo **Dividida** apilado verticalmente, barra de estado compacta de una sola línea y soporte `100dvh` / `viewport-fit=cover`.
+
+## [2026.11.15.5] - 2026-11-15
+
+### Cambiado
+- Restringida la apertura, selector de archivos, árbol de carpetas, arrastrar/soltar y `file_handlers` de la PWA exclusivamente a archivos Markdown (`.md`, `.markdown`, `.mdx`, `.mdown`), excluyendo ficheros `.txt`.
+
+### Corregido
+- Apertura de archivos `.md` desde el explorador de archivos del sistema operativo (Windows) en la PWA instalada (`file_handlers` / `launchQueue`): eliminada la condición de carrera con la restauración asíncrona de sesión en IndexedDB, añadida detección de duplicados mediante `isSameEntry()`, registrado temprano del consumidor `launchQueue`, `launch_handler` (`focus-existing`) en [manifest.webmanifest](file:///projects/antigravity/mdeditor/pwa/manifest.webmanifest) y coincidencia tolerante de caché en [sw.js](file:///projects/antigravity/mdeditor/pwa/sw.js).
+
+## [2026.11.15.4] - 2026-11-15
+
+### Añadido
+- Botón **Instalar app** en la barra superior (`beforeinstallprompt`) cuando se ejecuta en modo PWA instalable.
+- Documentación de política de privacidad ([PRIVACY.md](file:///projects/antigravity/mdeditor/PRIVACY.md)) y guía paso a paso para publicar en Chrome Web Store e instalar la PWA ([PUBLISHING.md](file:///projects/antigravity/mdeditor/PUBLISHING.md)).
+
+### Cambiado
+- Eliminado el bloque no utilizado `web_accessible_resources` en `<all_urls>` de [extension/manifest.json](file:///projects/antigravity/mdeditor/extension/manifest.json) y refinado [pwa/manifest.webmanifest](file:///projects/antigravity/mdeditor/pwa/manifest.webmanifest) (`id`, `purpose`, extensiones sin solapamiento).
+
+### Corregido
+- Empaquetado de `dist-extension.zip` en [finalize-extension.mjs](file:///projects/antigravity/mdeditor/scripts/finalize-extension.mjs) para situar `manifest.json` directamente en la raíz del archivo ZIP (requisito obligatorio de Chrome Web Store).
+
+## [2026.11.15.3] - 2026-11-15
+
+### Añadido
+- Botón para cerrar/desmontar la carpeta abierta en la barra lateral, indicador `Cargando carpeta…` y soporte de carpetas en modo sólo lectura (`RO`, con respaldo automático a *Guardar como…*).
+
+### Corregido
+- Explorador lateral de carpetas refactorizado a carga instantánea nivel a nivel bajo demanda (`readDirectoryChildren`), excluyendo directorios pesados (`__pycache__`, `venv`, `.venv`, `envs`, `node_modules`) y tolerando enlaces simbólicos rotos o subcarpetas sin permisos.
+
+## [2026.11.15.2] - 2026-11-15
+
+### Cambiado
+- Renombrado de **Vista Humana** a **Vista Previa** (`Preview` en inglés) en la interfaz, manifiestos, visor `.md`, documentación y módulo `src/editors/preview/` (`PreviewEditor`), manteniendo migración automática de sesiones previas.
+
+### Corregido
+- Sincronización bidireccional y externa entre **Raw** y **Vista Previa** al cambiar de idioma en la nota rápida sin modificar, cambiar de pestaña o modo de vista, y ante ediciones de Markdown incompleto transitorio.
+
+## [2026.11.15.1] - 2026-11-15
+
+### Añadido
+- **Núcleo de edición bidireccional** (`Raw` con CodeMirror 6 ↔ `Vista Humana WYSIWYG` con TipTap v3) y modo **Pantalla Dividida** con sincronización de contenido y scroll proporcional (`Ctrl+1` / `Ctrl+2` / `Ctrl+3`).
+- **Puente AST determinista** (`unified` / `remark`) con soporte completo para CommonMark, GFM (tablas editables con alineación, listas de tareas `[x]`), Frontmatter YAML, alertas GitHub (`[!NOTE]`, `[!TIP]`, `[!IMPORTANT]`, `[!WARNING]`, `[!CAUTION]`) y preservación de HTML directo.
+- **Renderizado técnico local bajo demanda**: bloques de diagramas **Mermaid** editables en vivo y fórmulas matemáticas **LaTeX/KaTeX** inline (`$...$`) y en bloque (`$$...$$`) con fuentes `.woff2` empaquetadas localmente.
+- **Imágenes autocontenidas en Base64**: pegar o arrastrar imágenes las incrusta como Data URI dentro del `.md`, con plegado visual en chips expandibles (`base64/<tipo> · <tamaño> [expandir]`) en vista Raw.
+- **Productividad y espacio de trabajo**: pestañas, Nota rápida (Scratchpad) persistente, explorador lateral de carpetas mediante File System Access API (`Ctrl+S`, `Ctrl+O`), índice de encabezados (Outline), comandos `/` en Vista Humana, menú flotante de selección, paleta de comandos (`Ctrl+Shift+P`), Modo Zen (`Ctrl+Shift+Z`) y temas **Claro / Oscuro / Sepia**.
+- **Exportación**: generación de HTML autocontenido, impresión/PDF limpio y copiado al portapapeles como texto enriquecido.
+- **Empaquetado dual**:
+  - **Extensión de Chromium (Manifest V3)** en `dist-extension/` y `dist-extension.zip` con editor en pestaña, Side Panel, menú contextual y visor automático para URLs `.md`/`.markdown`.
+  - **PWA instalable offline** en `dist-pwa/` con `file_handlers` y Service Worker pre-cacheado.
+- **Sistema i18n extensible** con idiomas iniciales Español (`es`) e Inglés (`en`).
+- **Verificación automatizada**: suite Vitest (`tests/bridge.test.ts`, `tests/base64Fold.test.ts`, `tests/i18n.test.ts`) y prueba E2E en Google Chrome headless (`scripts/verify-e2e.mjs`).

@@ -1,0 +1,19 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+dist-pwa/
+dist-extension/
+dist-extension.zip
+dist/
+
+# Cache & logs
+.vite/
+*.log
+npm-debug.log*
+
+# Environment & OS files
+.env
+.env.*
+.DS_Store
+Thumbs.db

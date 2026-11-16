@@ -1,0 +1,44 @@
+{
+  "manifest_version": 3,
+  "name": "PrismaMD — Fast Markdown Editor",
+  "version": "2026.11.15.6",
+  "description": "Editor Markdown rápido y bidireccional (Raw + Vista Previa WYSIWYG + Mermaid + KaTeX) con Panel Lateral y Visor .md.",
+  "permissions": [
+    "storage",
+    "sidePanel",
+    "contextMenus"
+  ],
+  "icons": {
+    "16": "icons/icon-16.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  },
+  "action": {
+    "default_title": "Abrir PrismaMD",
+    "default_icon": {
+      "16": "icons/icon-16.png",
+      "48": "icons/icon-48.png",
+      "128": "icons/icon-128.png"
+    }
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "side_panel": {
+    "default_path": "index.html?mode=sidepanel"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "file://*/*.md",
+        "file://*/*.markdown",
+        "*://*/*.md",
+        "*://*/*.markdown"
+      ],
+      "js": [
+        "mdViewerContent.js"
+      ],
+      "run_at": "document_end"
+    }
+  ]
+}
