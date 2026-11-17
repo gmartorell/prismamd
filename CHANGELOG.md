@@ -8,6 +8,11 @@ El formato está basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1
 
 ## [Unreleased]
 
+## [2026.11.17.1] - 2026-11-17
+
+### Añadido
+- Diálogo unificado **Acerca de PrismaMD** ([VersionModal.tsx](src/components/VersionModal.tsx)) con aviso de Copyright (`© 2026 Guillem Martorell Nicolau`), enlace a la licencia **MIT** (`LICENSE`), botón directo al repositorio en GitHub (`https://github.com/gmartorell/prismamd`) y acceso mediante un nuevo icono de información en [TopToolbar.tsx](src/components/TopToolbar.tsx).
+
 ## [2026.11.16.4] - 2026-11-16
 
 ### Cambiado

@@ -1,7 +1,10 @@
-import { CheckCircle2, RefreshCw, Sparkles, WifiOff, X } from 'lucide-preact';
+import { CheckCircle2, Code2, ExternalLink, RefreshCw, Sparkles, WifiOff, X } from 'lucide-preact';
 import { useEffect, useRef } from 'preact/hooks';
 import { formatMessage, useI18n } from '../i18n';
 import type { RuntimeChannel, UpdateCheckResult } from '../utils/version';
+
+const GITHUB_REPO_URL = 'https://github.com/gmartorell/prismamd';
+const GITHUB_LICENSE_URL = 'https://github.com/gmartorell/prismamd/blob/main/LICENSE';
 
 interface VersionModalProps {
   open: boolean;
@@ -78,6 +81,46 @@ export function VersionModal({
         </div>
 
         <div className="version-modal-body">
+          <p className="about-description">{t.about.description}</p>
+
+          <div className="about-license-card">
+            <div className="version-meta-row">
+              <span className="version-meta-label">{t.about.copyrightLabel}</span>
+              <span className="version-meta-value" data-testid="about-copyright">
+                {t.about.copyrightValue}
+              </span>
+            </div>
+
+            <div className="version-meta-row">
+              <span className="version-meta-label">{t.about.licenseLabel}</span>
+              <a
+                className="version-link"
+                href={GITHUB_LICENSE_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+                data-testid="about-license-link"
+              >
+                <span>{t.about.licenseValue}</span>
+                <ExternalLink size={12} />
+              </a>
+            </div>
+
+            <div className="version-meta-row">
+              <span className="version-meta-label">{t.about.repositoryLabel}</span>
+              <a
+                className="version-link"
+                href={GITHUB_REPO_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                <span>github.com/gmartorell/prismamd</span>
+                <ExternalLink size={12} />
+              </a>
+            </div>
+
+            <p className="about-license-note">{t.about.licenseNote}</p>
+          </div>
+
           <div className="version-meta-row">
             <span className="version-meta-label">{t.about.currentVersion}</span>
             <code className="version-meta-value" data-testid="about-current-version">
@@ -144,6 +187,17 @@ export function VersionModal({
         </div>
 
         <div className="version-modal-footer">
+          <a
+            className="version-btn secondary version-btn-link"
+            href={GITHUB_REPO_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+            data-testid="about-github-link"
+          >
+            <Code2 size={13} />
+            <span>{t.about.viewOnGithub}</span>
+          </a>
+
           <button
             type="button"
             className="version-btn secondary"

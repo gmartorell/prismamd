@@ -1793,7 +1793,7 @@ body,
 }
 
 .version-modal {
-  width: min(420px, 100%);
+  width: min(460px, 100%);
   border-radius: 12px;
   background: var(--bg-elevated);
   border: 1px solid var(--border-strong);
@@ -1862,6 +1862,49 @@ body,
   color: var(--accent);
 }
 
+.about-description {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+.about-license-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-app);
+}
+
+.about-license-note {
+  margin: 2px 0 0;
+  padding-top: 6px;
+  border-top: 1px solid var(--border-subtle);
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--text-muted);
+}
+
+.version-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--accent);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.version-link:hover {
+  text-decoration: underline;
+}
+
+.version-btn-link {
+  text-decoration: none;
+}
+
 .version-status-card {
   display: flex;
   align-items: center;
@@ -1888,6 +1931,7 @@ body,
 
 .version-modal-footer {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: flex-end;
   gap: 8px;

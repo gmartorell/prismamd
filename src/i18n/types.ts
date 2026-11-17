@@ -208,8 +208,17 @@ export interface TranslationDictionary {
   };
   about: {
     versionLabel: string;
+    openAbout: string;
     menuCommand: string;
     title: string;
+    description: string;
+    copyrightLabel: string;
+    copyrightValue: string;
+    licenseLabel: string;
+    licenseValue: string;
+    licenseNote: string;
+    repositoryLabel: string;
+    viewOnGithub: string;
     currentVersion: string;
     latestVersion: string;
     channelLabel: string;

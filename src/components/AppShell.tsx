@@ -2009,6 +2009,10 @@ export function AppShell() {
         onCopyRichText={() => void handleCopyRichText()}
         onInstallApp={installPrompt ? () => void handleInstallApp() : undefined}
         onExpandSidePanel={() => void handleExpandSidePanel()}
+        onOpenAbout={() => {
+          setAboutOpen(true);
+          void handleCheckUpdates();
+        }}
       />
 
       {!zenMode && (

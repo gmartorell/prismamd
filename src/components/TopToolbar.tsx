@@ -14,6 +14,7 @@ import {
   FolderOpen,
   GitBranch,
   Image as ImageIcon,
+  Info,
   Italic,
   ListTodo,
   Maximize2,
@@ -71,6 +72,7 @@ interface TopToolbarProps {
   onCopyRichText: () => void;
   onInstallApp?: () => void;
   onExpandSidePanel?: () => void;
+  onOpenAbout?: () => void;
 }
 
 export function TopToolbar({
@@ -99,6 +101,7 @@ export function TopToolbar({
   onCopyRichText,
   onInstallApp,
   onExpandSidePanel,
+  onOpenAbout,
 }: TopToolbarProps) {
   const { locale, t, availableLocales, setLocale } = useI18n();
   const [exportOpen, setExportOpen] = useState(false);
@@ -368,6 +371,19 @@ export function TopToolbar({
             ))}
           </select>
         </label>
+
+        {onOpenAbout && (
+          <button
+            type="button"
+            className="tool-btn hide-mobile-xs"
+            onClick={onOpenAbout}
+            title={t.about.openAbout}
+            aria-label={t.about.openAbout}
+            data-testid="about-toolbar-btn"
+          >
+            <Info size={15} />
+          </button>
+        )}
 
         <button
           type="button"

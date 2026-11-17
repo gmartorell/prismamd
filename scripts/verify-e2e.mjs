@@ -192,12 +192,18 @@ async function run() {
     await page.waitForTimeout(150);
     await page.screenshot({ path: path.join(artifactDir, 'raw-base64-fold-light.png') });
 
-    // Verify visible version pill and Version & Updates modal
+    // Verify visible version pill and unified About PrismaMD modal (toolbar + status bar)
     const versionBadgeText = await page.locator('[data-testid="status-version-btn"]').innerText();
     assert(/^v\d+\.\d+\.\d+\.\d+/.test(versionBadgeText.trim()), `Expected version badge, got '${versionBadgeText}'`);
-    await page.locator('[data-testid="status-version-btn"]').click();
+    await page.locator('[data-testid="about-toolbar-btn"]').click();
     await page.waitForSelector('[data-testid="about-current-version"]', { timeout: 5000 });
     await page.waitForSelector('.version-status-card.status-up-to-date', { timeout: 5000 });
+    const copyrightText = await page.locator('[data-testid="about-copyright"]').innerText();
+    const githubHref = await page.locator('[data-testid="about-github-link"]').getAttribute('href');
+    const licenseHref = await page.locator('[data-testid="about-license-link"]').getAttribute('href');
+    assert(copyrightText.includes('Guillem Martorell Nicolau'), `Expected copyright attribution, got '${copyrightText}'`);
+    assert(githubHref === 'https://github.com/gmartorell/prismamd', `Expected GitHub link, got '${githubHref}'`);
+    assert(licenseHref === 'https://github.com/gmartorell/prismamd/blob/main/LICENSE', `Expected LICENSE link, got '${licenseHref}'`);
     await page.keyboard.press('Escape');
     await page.waitForTimeout(100);
 
