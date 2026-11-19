@@ -8,6 +8,11 @@ El formato está basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1
 
 ## [Unreleased]
 
+## [2026.11.19.1] - 2026-11-19
+
+### Añadido
+- Control de **zoom de documento (`50 % – 200 %`)** aplicado simultáneamente a los editores **Raw** y **Vista Previa** mediante `--doc-zoom` ([AppShell.tsx](src/components/AppShell.tsx), [RawEditor.tsx](src/editors/raw/RawEditor.tsx), [app.css](src/styles/app.css)), con botones `− / 100% / +` en [StatusBar.tsx](src/components/StatusBar.tsx), atajos `Ctrl++` / `Ctrl+-` / `Ctrl+0`, `Ctrl + Rueda` sobre el documento, acciones en la Paleta de comandos y persistencia en `localStorage`.
+
 ## [2026.11.17.1] - 2026-11-17
 
 ### Añadido

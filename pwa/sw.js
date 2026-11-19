@@ -1,4 +1,4 @@
-const CACHE_NAME = 'prismamd-2026.11.17.1';
+const CACHE_NAME = 'prismamd-2026.11.19.1';
 const CORE_PRECACHE_ASSETS = /*__CORE_PRECACHE_ASSETS__*/ [];
 const LAZY_WARM_ASSETS = /*__LAZY_WARM_ASSETS__*/ [];
 

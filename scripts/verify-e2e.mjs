@@ -207,6 +207,26 @@ async function run() {
     await page.keyboard.press('Escape');
     await page.waitForTimeout(100);
 
+    // Regression: Document zoom scales both Raw and Preview font sizes (50%-200%)
+    const baseSizes = await page.evaluate(() => ({
+      preview: Number.parseFloat(getComputedStyle(document.querySelector('.preview-prosemirror')).fontSize),
+      raw: Number.parseFloat(getComputedStyle(document.querySelector('.raw-editor-host .cm-editor')).fontSize),
+    }));
+    await page.locator('[data-testid="zoom-in-btn"]').click();
+    await page.waitForTimeout(100);
+    const zoomText110 = await page.locator('[data-testid="zoom-reset-btn"]').innerText();
+    const zoomedSizes = await page.evaluate(() => ({
+      preview: Number.parseFloat(getComputedStyle(document.querySelector('.preview-prosemirror')).fontSize),
+      raw: Number.parseFloat(getComputedStyle(document.querySelector('.raw-editor-host .cm-editor')).fontSize),
+    }));
+    assert(zoomText110.trim() === '110%', `Expected 110% zoom badge, got '${zoomText110}'`);
+    assert(zoomedSizes.preview > baseSizes.preview, 'Preview fontSize should increase on zoom-in');
+    assert(zoomedSizes.raw > baseSizes.raw, 'Raw fontSize should increase on zoom-in');
+    await page.locator('[data-testid="zoom-reset-btn"]').click();
+    await page.waitForTimeout(80);
+    const zoomText100 = await page.locator('[data-testid="zoom-reset-btn"]').innerText();
+    assert(zoomText100.trim() === '100%', `Expected 100% zoom after reset, got '${zoomText100}'`);
+
     // Regression: Export PDF embeds KaTeX woff2 Data URIs and waits for fonts before print()
     await page.evaluate(() => {
       const origCreate = document.createElement.bind(document);

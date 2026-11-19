@@ -203,6 +203,9 @@ export const esDict: TranslationDictionary = {
     draft: 'Borrador local',
     scrollSyncOn: 'Scroll sincronizado',
     scrollSyncOff: 'Scroll libre',
+    zoomIn: 'Acercar (Ctrl++)',
+    zoomOut: 'Alejar (Ctrl+-)',
+    zoomReset: 'Restablecer zoom (Ctrl+0)',
   },
   about: {
     versionLabel: 'Versión',

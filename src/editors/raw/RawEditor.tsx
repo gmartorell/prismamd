@@ -331,7 +331,7 @@ export const RawEditor = forwardRef<RawEditorHandle, RawEditorProps>(function Ra
         height: '100%',
         backgroundColor: 'var(--bg-editor)',
         color: 'var(--text-primary)',
-        fontSize: '14px',
+        fontSize: 'calc(14px * var(--doc-zoom, 1))',
       },
       '.cm-scroller': {
         fontFamily: 'var(--font-mono)',

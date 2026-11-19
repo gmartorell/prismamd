@@ -1,4 +1,4 @@
-import { Link2, Link2Off } from 'lucide-preact';
+import { Link2, Link2Off, Minus, Plus } from 'lucide-preact';
 import { formatMessage, useI18n } from '../i18n';
 import type { ViewMode } from '../workspace/fileSystem';
 
@@ -12,6 +12,10 @@ interface StatusBarProps {
   hasDiskHandle: boolean;
   scrollSync: boolean;
   onToggleScrollSync: () => void;
+  zoom?: number;
+  onZoomIn?: () => void;
+  onZoomOut?: () => void;
+  onZoomReset?: () => void;
   version: string;
   hasUpdate: boolean;
   onOpenVersionModal: () => void;
@@ -27,6 +31,10 @@ export function StatusBar({
   hasDiskHandle,
   scrollSync,
   onToggleScrollSync,
+  zoom = 100,
+  onZoomIn,
+  onZoomOut,
+  onZoomReset,
   version,
   hasUpdate,
   onOpenVersionModal,
@@ -72,6 +80,42 @@ export function StatusBar({
         <span className="status-item status-reading">
           {readingMinutes} {t.status.minRead}
         </span>
+        {onZoomOut && onZoomIn && onZoomReset && (
+          <div className="status-zoom-group">
+            <button
+              type="button"
+              className="status-zoom-btn"
+              onClick={onZoomOut}
+              disabled={zoom <= 50}
+              title={t.status.zoomOut}
+              aria-label={t.status.zoomOut}
+              data-testid="zoom-out-btn"
+            >
+              <Minus size={11} />
+            </button>
+            <button
+              type="button"
+              className={`status-zoom-value ${zoom !== 100 ? 'custom' : ''}`}
+              onClick={onZoomReset}
+              title={t.status.zoomReset}
+              aria-label={t.status.zoomReset}
+              data-testid="zoom-reset-btn"
+            >
+              {zoom}%
+            </button>
+            <button
+              type="button"
+              className="status-zoom-btn"
+              onClick={onZoomIn}
+              disabled={zoom >= 200}
+              title={t.status.zoomIn}
+              aria-label={t.status.zoomIn}
+              data-testid="zoom-in-btn"
+            >
+              <Plus size={11} />
+            </button>
+          </div>
+        )}
         <button
           type="button"
           className={`status-version-btn ${hasUpdate ? 'has-update' : ''}`}

@@ -203,6 +203,9 @@ export const enDict: TranslationDictionary = {
     draft: 'Local draft',
     scrollSyncOn: 'Scroll sync',
     scrollSyncOff: 'Free scroll',
+    zoomIn: 'Zoom in (Ctrl++)',
+    zoomOut: 'Zoom out (Ctrl+-)',
+    zoomReset: 'Reset zoom (Ctrl+0)',
   },
   about: {
     versionLabel: 'Version',

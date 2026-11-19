@@ -60,6 +60,7 @@ const SIDEPANEL_EXPLORER_LS_KEY = 'prismamd.sidepanel.explorerOpen';
 const SIDEPANEL_OUTLINE_LS_KEY = 'prismamd.sidepanel.outlineOpen';
 const THEME_LS_KEY = 'prismamd.theme';
 const SPLIT_RATIO_LS_KEY = 'prismamd.splitRatio';
+const DOC_ZOOM_LS_KEY = 'prismamd.docZoom';
 const TABS_SYNC_CHANNEL = 'prismamd-tabs-sync';
 
 interface BeforeInstallPromptEvent extends Event {
@@ -147,6 +148,27 @@ function readInitialSplitRatio(): number {
   return 50;
 }
 
+function clampDocZoom(value: number): number {
+  if (!Number.isFinite(value)) return 100;
+  const stepped = Math.round(value / 10) * 10;
+  return Math.min(200, Math.max(50, stepped));
+}
+
+function readInitialDocZoom(): number {
+  try {
+    const saved = localStorage.getItem(DOC_ZOOM_LS_KEY);
+    if (saved !== null) {
+      const parsed = Number.parseInt(saved, 10);
+      if (Number.isFinite(parsed)) {
+        return clampDocZoom(parsed);
+      }
+    }
+  } catch {
+    // Ignore storage errors
+  }
+  return 100;
+}
+
 function toTabSnapshots(tabs: EditorTab[]): PersistedTabSnapshot[] {
   return tabs.map((tb) => ({
     id: tb.id,
@@ -178,6 +200,7 @@ export function AppShell() {
     isSidePanel ? readInitialSidePanelFlag(SIDEPANEL_OUTLINE_LS_KEY, false) : false,
   );
   const [splitRatio, setSplitRatio] = useState<number>(() => readInitialSplitRatio());
+  const [docZoom, setDocZoom] = useState<number>(() => readInitialDocZoom());
   const [isDraggingSplit, setIsDraggingSplit] = useState(false);
   const [zenMode, setZenMode] = useState(false);
   const [scrollSync, setScrollSync] = useState(true);
@@ -375,6 +398,23 @@ export function AppShell() {
       // Ignore
     }
   }, []);
+
+  const updateDocZoom = useCallback((updater: number | ((prev: number) => number)) => {
+    setDocZoom((prev) => {
+      const raw = typeof updater === 'function' ? updater(prev) : updater;
+      const clamped = clampDocZoom(raw);
+      try {
+        localStorage.setItem(DOC_ZOOM_LS_KEY, String(clamped));
+      } catch {
+        // Ignore
+      }
+      return clamped;
+    });
+  }, []);
+
+  const handleZoomIn = useCallback(() => updateDocZoom((z) => z + 10), [updateDocZoom]);
+  const handleZoomOut = useCallback(() => updateDocZoom((z) => z - 10), [updateDocZoom]);
+  const handleZoomReset = useCallback(() => updateDocZoom(100), [updateDocZoom]);
 
   const setTheme = useCallback((next: ThemeMode) => {
     setThemeState(next);
@@ -1666,6 +1706,21 @@ export function AppShell() {
         setViewMode('preview');
         return;
       }
+      if (mod && !e.altKey && (e.key === '=' || e.key === '+' || e.code === 'NumpadAdd')) {
+        e.preventDefault();
+        handleZoomIn();
+        return;
+      }
+      if (mod && !e.altKey && (e.key === '-' || e.key === '_' || e.code === 'NumpadSubtract')) {
+        e.preventDefault();
+        handleZoomOut();
+        return;
+      }
+      if (mod && !e.altKey && (e.key === '0' || e.code === 'Numpad0')) {
+        e.preventDefault();
+        handleZoomReset();
+        return;
+      }
       if (
         e.key === 'Escape' &&
         zenMode &&
@@ -1686,11 +1741,32 @@ export function AppShell() {
     handleOpenFile,
     handleOpenSearch,
     handleSave,
+    handleZoomIn,
+    handleZoomOut,
+    handleZoomReset,
     paletteOpen,
     setViewMode,
     viewMode,
     zenMode,
   ]);
+
+  // Ctrl/Cmd + mouse wheel zoom inside the editor stage
+  useEffect(() => {
+    const stage = editorStageRef.current;
+    if (!stage) return;
+    const onWheel = (e: WheelEvent) => {
+      if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
+      if (e.deltaY === 0) return;
+      e.preventDefault();
+      if (e.deltaY < 0) {
+        handleZoomIn();
+      } else {
+        handleZoomOut();
+      }
+    };
+    stage.addEventListener('wheel', onWheel, { passive: false });
+    return () => stage.removeEventListener('wheel', onWheel);
+  }, [handleZoomIn, handleZoomOut]);
 
   // Prevent stray margin file drops from navigating the browser tab away
   useEffect(() => {
@@ -1835,6 +1911,9 @@ export function AppShell() {
       { id: 'view-split', category: t.palette.categories.view, title: t.views.split, shortcut: 'Ctrl+2', run: () => setViewMode('split') },
       { id: 'view-preview', category: t.palette.categories.view, title: t.views.preview, shortcut: 'Ctrl+3', run: () => setViewMode('preview') },
       { id: 'view-zen', category: t.palette.categories.view, title: t.toolbar.zenMode, shortcut: 'Alt+Z', run: () => setZenMode((v) => !v) },
+      { id: 'view-zoom-in', category: t.palette.categories.view, title: t.status.zoomIn, shortcut: 'Ctrl++', run: handleZoomIn },
+      { id: 'view-zoom-out', category: t.palette.categories.view, title: t.status.zoomOut, shortcut: 'Ctrl+-', run: handleZoomOut },
+      { id: 'view-zoom-reset', category: t.palette.categories.view, title: t.status.zoomReset, shortcut: 'Ctrl+0', run: handleZoomReset },
       { id: 'view-explorer', category: t.palette.categories.view, title: t.sidebars.toggleExplorer, run: () => setExplorerOpen((v) => !v) },
       { id: 'view-outline', category: t.palette.categories.view, title: t.sidebars.toggleOutline, run: () => setOutlineOpen((v) => !v) },
       {
@@ -1920,6 +1999,9 @@ export function AppShell() {
     handleExportHtml,
     handleExportPdf,
     handleCopyRichText,
+    handleZoomIn,
+    handleZoomOut,
+    handleZoomReset,
     setLocale,
     updateState.currentVersion,
     handleCheckUpdates,
@@ -2058,7 +2140,12 @@ export function AppShell() {
         <main
           ref={editorStageRef}
           className={`editor-stage mode-${viewMode}`}
-          style={{ '--split-ratio': `${splitRatio}%` } as Record<string, string>}
+          style={
+            {
+              '--split-ratio': `${splitRatio}%`,
+              '--doc-zoom': String(docZoom / 100),
+            } as Record<string, string>
+          }
         >
           {viewMode !== 'preview' && (
             <section
@@ -2151,6 +2238,10 @@ export function AppShell() {
           hasDiskHandle={Boolean(activeTab.fileHandle)}
           scrollSync={scrollSync}
           onToggleScrollSync={() => setScrollSync((v) => !v)}
+          zoom={docZoom}
+          onZoomIn={handleZoomIn}
+          onZoomOut={handleZoomOut}
+          onZoomReset={handleZoomReset}
           version={updateState.currentVersion}
           hasUpdate={updateState.status === 'update-available'}
           onOpenVersionModal={() => {

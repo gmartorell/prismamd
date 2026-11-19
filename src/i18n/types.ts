@@ -205,6 +205,9 @@ export interface TranslationDictionary {
     draft: string;
     scrollSyncOn: string;
     scrollSyncOff: string;
+    zoomIn: string;
+    zoomOut: string;
+    zoomReset: string;
   };
   about: {
     versionLabel: string;
